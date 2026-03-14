@@ -88,8 +88,9 @@ def _gini(values: np.ndarray) -> float:
 def _get_current_tax_info(env) -> str:
     try:
         tax_comp = env.get_component("PeriodicBracketTax")
-        brackets = getattr(tax_comp, "curr_marginal_rates", None) or \
-                   getattr(tax_comp, "marginal_tax_rates", None)
+        brackets = getattr(tax_comp, "curr_marginal_rates", None)
+        if brackets is None:
+            brackets = getattr(tax_comp, "tax_rates", [])
         if brackets is not None:
             rates = [f"{r*100:.1f}%" for r in brackets]
             return f"  Current marginal tax rates (brackets): {', '.join(rates)}"

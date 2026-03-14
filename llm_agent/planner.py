@@ -84,9 +84,9 @@ class PlannerLLM:
             None：非稅收日（Planner 提交 NOOP）
             list[int]：稅收日（稅率索引 list）
         """
-        is_tax_day = (step % self.tax_period == 0) and (step > 0 or step == 0)
-        # step=0 是第一步，通常稅率設定從 step=100 開始，但 step=0 也可以設定初始稅率
-        # 若想跳過第 0 步設稅：改為 (step % self.tax_period == 0) and (step > 0)
+        # 稅收日：step=0（初始設稅）以及每隔 tax_period 步（預設100）
+        # 非決策日：其餘步數提交 NOOP，並呼叫 observe LLM 寫入短期記憶
+        is_tax_day = (step % self.tax_period == 0)
 
         # 翻譯觀察
         planner_obs = obs.get(env.world.planner.idx, {})
