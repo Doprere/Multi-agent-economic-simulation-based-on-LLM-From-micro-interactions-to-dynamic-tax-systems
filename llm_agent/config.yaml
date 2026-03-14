@@ -1,0 +1,94 @@
+environment:
+  scenario_name: "layout_from_file/simple_wood_and_stone"
+  n_agents: 4
+  episode_length: 1000
+  world_size: [25, 25]
+  dense_log_frequency: 1
+  env_layout_file: "quadrant_25x25_20each_30clump.txt"
+  flatten_observations: false
+  flatten_masks: true
+  multi_action_mode_agents: false
+  multi_action_mode_planner: true
+  components:
+    - Build:
+        skill_dist: "pareto"
+        payment_max_skill_multiplier: 3
+    - ContinuousDoubleAuction:
+        max_num_orders: 5
+        max_bid_ask: 10
+        order_labor: 0.25
+    - Gather:
+        move_labor: 1.0
+        collect_labor: 1.0
+    - PeriodicBracketTax:
+        period: 100
+        tax_model: "model_wrapper"
+        bracket_spacing: "us-federal"
+        disable_taxes: false
+
+llm:
+  model: "gpt-4o-mini"
+  base_url: "https://api.openai.com/v1"
+  api_key: ""          # 可留空，優先讀環境變數 OPENAI_API_KEY
+  max_retries: 3
+  temperature: 0.7
+  timeout: 30
+
+memory:
+  agent_short_term_window: 8     # 短期記憶滑動視窗（保留最近 N 步 thought）
+  agent_long_term_trigger: 10    # 累積 N 步後呼叫 LLM 彙整長期記憶
+  planner_short_term_window: 3   # Planner 滑動視窗大小
+
+agents:
+  personas:
+    - id: 0
+      name: "Youth Group"
+      display_name: "青年族群（≤20歲）"
+      age_group: "youth"
+      role: >
+        你代表 20 歲以下的年輕族群。體力旺盛，學習力強，雖然技術尚未成熟，
+        但移動靈活、體力消耗低。傾向積極探索地圖、快速採集資源，對市場交易
+        充滿好奇但缺乏經驗。
+      skill_pareto_alpha: 6.0    # 高 alpha → 技能集中在低值（初學者）
+      labor_cost_modifier: 0.7   # 體力消耗降低 30%
+
+    - id: 1
+      name: "Young Adult Group"
+      display_name: "壯年族群（21~40歲）"
+      age_group: "young_adult"
+      role: >
+        你代表 21~40 歲的壯年族群。技術中高、體力充沛，是最均衡的主力族群。
+        善於根據市場狀況靈活切換採集、建造與交易策略。
+      skill_pareto_alpha: 4.0    # 中等（原始 pareto(4)）
+      labor_cost_modifier: 1.0
+
+    - id: 2
+      name: "Middle-aged Group"
+      display_name: "中年族群（41~60歲）"
+      age_group: "middle_aged"
+      role: >
+        你代表 41~60 歲的中年族群。技術成熟、建造收益高，但體力逐漸下降。
+        傾向減少不必要的移動，選擇性集中採集再一次建造，並善用市場交易
+        彌補體力成本。
+      skill_pareto_alpha: 2.5    # 低 alpha → 技能向高值傾斜
+      labor_cost_modifier: 1.3
+
+    - id: 3
+      name: "Senior Group"
+      display_name: "老年族群（>60歲）"
+      age_group: "senior"
+      role: >
+        你代表 60 歲以上的老年族群。技術最成熟、建造技能最高，但體力最差，
+        移動消耗大。偏向靜態策略：盡量減少移動，透過市場交易取得資源，
+        並在有利位置進行高收益建造。
+      skill_pareto_alpha: 1.5    # 極低 alpha → 高技能但方差大
+      labor_cost_modifier: 1.8
+
+planner:
+  name: "Social Planner"
+  display_name: "社會規劃師"
+  role: >
+    你是一位社會規劃師，負責制定稅率政策以最大化社會福利（equality × productivity）。
+    你每步觀察社會經濟狀況，累積對社會不平等和生產力的理解，
+    並在每 100 步時根據這些觀察設定最合適的稅率政策。
+  tax_period: 100

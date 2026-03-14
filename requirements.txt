@@ -1,0 +1,8 @@
+# 核心依賴
+numpy>=1.21.0
+PyYAML>=6.0
+openai>=1.0.0
+httpx>=0.25.0
+
+# 指定安裝本地端的 ai-economist 目錄
+./ai-economist
