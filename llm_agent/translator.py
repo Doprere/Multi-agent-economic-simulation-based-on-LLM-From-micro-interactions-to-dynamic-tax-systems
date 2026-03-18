@@ -11,14 +11,29 @@ from .action_map import get_masked_description
 
 # ── Helpers ────────────────────────────────────────────────────
 
-def _extract_resource_positions(visible_map: np.ndarray) -> dict[str, list[tuple]]:
-    """Extract resource positions from 11x11 visible map (relative to center)."""
+def _extract_resource_positions(visible_map: np.ndarray, channel_names: list[str] | None = None) -> dict[str, list[tuple]]:
+    """Extract resource positions from visible map (relative to center).
+
+    channel_names: ordered list from world.maps._maps.keys().
+    If None, fallback to Foundation default order: Stone=0, Wood=1.
+    """
     resources_found: dict[str, list[tuple]] = {"Wood": [], "Stone": []}
     h, w = visible_map.shape[1], visible_map.shape[2]
     center_r, center_c = h // 2, w // 2
-    # Foundation map channel order (alphabetical by resource name):
-    # Coin=0, Stone=1, Wood=2 (approximately — depends on env resources list)
-    CHANNEL_MAP = {1: "Stone", 2: "Wood"}
+
+    # Foundation 的 map channel 順序由 world.maps._maps 決定，預設為 alphabetical:
+    # Stone=0, Wood=1, House=2, Water=3, StoneSourceBlock=4, WoodSourceBlock=5
+    if channel_names is not None:
+        CHANNEL_MAP = {}
+        for i, name in enumerate(channel_names):
+            if name == "Wood":
+                CHANNEL_MAP[i] = "Wood"
+            elif name == "Stone":
+                CHANNEL_MAP[i] = "Stone"
+    else:
+        # 正確的預設 (alphabetical order)：Stone=0, Wood=1
+        CHANNEL_MAP = {0: "Stone", 1: "Wood"}
+
     for ch, name in CHANNEL_MAP.items():
         if ch >= visible_map.shape[0]:
             continue
@@ -120,9 +135,22 @@ class ObsTranslator:
         build_pay = agent.state.get("build_payment", "N/A")
         build_pay_str = f"{float(build_pay):.1f} Coin/house" if build_pay != "N/A" else "N/A"
 
-        visible_map = obs.get("map")
+        # ── 地圖觀察 ────────────────────────────────────────────
+        # obs key 是 'world-map'（Foundation 的 env_wrapper flatten 前綴）
+        _vm = obs.get("world-map")
+        visible_map = _vm if _vm is not None else obs.get("map")
+
+        # 動態取得 channel 順序（world.maps._maps 的 key 順序）
+        channel_names: list[str] | None = None
+        try:
+            channel_names = list(env.world.maps._maps.keys())
+        except AttributeError:
+            pass
+
         if visible_map is not None:
-            resource_pos = _extract_resource_positions(np.array(visible_map))
+            resource_pos = _extract_resource_positions(
+                np.array(visible_map), channel_names=channel_names
+            )
         else:
             resource_pos = {"Wood": [], "Stone": []}
 

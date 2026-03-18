@@ -18,6 +18,10 @@ from .translator import ObsTranslator, _gini
 
 logger = logging.getLogger(__name__)
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .logger import SimulationLogger
+
 
 # ──────────────────────────────────────────────────────────────
 #  PlannerLLM
@@ -36,9 +40,11 @@ class PlannerLLM:
         llm_client: LLMClient,
         mem_cfg: Any,
         tax_period: int = 100,
+        sim_logger: "SimulationLogger | None" = None,
     ) -> None:
         self.cfg = planner_cfg
         self.client = llm_client
+        self.sim_logger = sim_logger
         self.memory = PlannerMemory(window=mem_cfg.planner_short_term_window)
         self.tax_period = tax_period
         self.translator = ObsTranslator()
@@ -128,8 +134,24 @@ class PlannerLLM:
         except Exception as e:
             logger.error(f"[Planner] observe step failed step={step}: {e}")
             obs_summary = f"(observation failed: {e})"
+            thought = "(none)"
+            comment = str(e)
 
         self.memory.add_entry(obs_summary, prev_entry)
+
+        if self.sim_logger is not None:
+            self.sim_logger.log_thought(
+                step=step,
+                agent_id="planner",
+                agent_name=self.cfg.display_name,
+                role=self.cfg.role,
+                thought=thought,
+                action_id=-1,
+                society_comment=comment,
+                short_term_memory=memory_ctx,
+                is_tax_day=False,
+            )
+
         logger.info(f"[Planner] step={step} memory updated")
         return None
 
@@ -168,6 +190,19 @@ class PlannerLLM:
             )
             self.memory.add_entry(obs_summary, prev_entry)
 
+            if self.sim_logger is not None:
+                self.sim_logger.log_thought(
+                    step=step,
+                    agent_id="planner",
+                    agent_name=self.cfg.display_name,
+                    role=self.cfg.role,
+                    thought=thought,
+                    action_id=-1,
+                    tax_brackets=tax_brackets,
+                    short_term_memory=memory_ctx,
+                    is_tax_day=True,
+                )
+
             logger.info(
                 f"[Planner] step={step} tax decision: {tax_brackets} | {thought[:60]}..."
             )
@@ -178,6 +213,18 @@ class PlannerLLM:
             fallback = [0] * n_brackets
             obs_summary = f"[TAX ADJUSTMENT FAILED, fallback all-zero] error: {e}"
             self.memory.add_entry(obs_summary, prev_entry)
+            if self.sim_logger is not None:
+                self.sim_logger.log_thought(
+                    step=step,
+                    agent_id="planner",
+                    agent_name=self.cfg.display_name,
+                    role=self.cfg.role,
+                    thought=f"(tax step failed: {e})",
+                    action_id=-1,
+                    tax_brackets=fallback,
+                    short_term_memory=memory_ctx,
+                    is_tax_day=True,
+                )
             return fallback
 
     def _get_n_brackets(self, env) -> int:

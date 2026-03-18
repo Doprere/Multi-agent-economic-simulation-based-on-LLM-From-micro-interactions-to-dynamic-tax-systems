@@ -1,0 +1,32 @@
+{
+  "run_name": "run_20260317_234436",
+  "total_steps": 10,
+  "final_metrics": {
+    "step": 9,
+    "total_coin": 0.0,
+    "mean_coin": 0.0,
+    "gini": 0.0,
+    "planner_reward": 0.0,
+    "reward_agent_0": -0.0525,
+    "reward_agent_1": -0.0525,
+    "reward_agent_2": -0.0525,
+    "reward_agent_3": 0.0,
+    "coin_agent_0": 0.0,
+    "coin_agent_1": 0.0,
+    "coin_agent_2": 0.0,
+    "coin_agent_3": 0.0,
+    "wood_agent_0": 0,
+    "wood_agent_1": 1,
+    "wood_agent_2": 0,
+    "wood_agent_3": 0,
+    "stone_agent_0": 0,
+    "stone_agent_1": 0,
+    "stone_agent_2": 0,
+    "stone_agent_3": 0,
+    "labor_agent_0": 2.5,
+    "labor_agent_1": 7.0,
+    "labor_agent_2": 8.5,
+    "labor_agent_3": 2.5
+  },
+  "tax_count": 1
+}

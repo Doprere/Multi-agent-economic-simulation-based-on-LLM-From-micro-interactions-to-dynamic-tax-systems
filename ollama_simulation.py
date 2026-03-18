@@ -167,7 +167,12 @@ async def run_episode(
             temperature=cfg.llm.temperature,
         )
         agents = [
-            MobileAgentLLM(persona, ollama_client, cfg.memory)  # type: ignore[arg-type]
+            MobileAgentLLM(
+                persona,
+                ollama_client,
+                cfg.memory,
+                sim_logger=sim_logger,
+            )  # type: ignore[arg-type]
             for persona in cfg.personas
         ]
         planner = PlannerLLM(
@@ -175,6 +180,7 @@ async def run_episode(
             llm_client=ollama_client,  # type: ignore[arg-type]
             mem_cfg=cfg.memory,
             tax_period=cfg.planner.tax_period,
+            sim_logger=sim_logger,
         )
         print(f"[Init] {len(agents)} 個 Ollama Agent + 1 個 Ollama Planner 已建立")
     else:

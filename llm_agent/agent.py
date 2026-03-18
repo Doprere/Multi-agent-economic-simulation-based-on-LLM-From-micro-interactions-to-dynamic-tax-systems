@@ -22,6 +22,11 @@ from .translator import ObsTranslator
 
 logger = logging.getLogger(__name__)
 
+# avoid circular import: logger imported at runtime inside methods
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .logger import SimulationLogger
+
 # ──────────────────────────────────────────────────────────────
 #  Few-shot 範例
 # ──────────────────────────────────────────────────────────────
@@ -59,9 +64,11 @@ class MobileAgentLLM:
         persona: PersonaConfig,
         llm_client: LLMClient,
         mem_cfg: Any,
+        sim_logger: "SimulationLogger | None" = None,
     ) -> None:
         self.persona = persona
         self.client = llm_client
+        self.sim_logger = sim_logger
         self.memory = AgentMemory(
             agent_id=persona.id,
             short_term_window=mem_cfg.agent_short_term_window,
@@ -126,7 +133,20 @@ class MobileAgentLLM:
         # 4. 更新記憶
         self.memory.add_thought(thought)
 
-        # 5. 觸發長期記憶彙整（非阻塞）
+        # 5. 記錄到 sim_logger（Excel）
+        if self.sim_logger is not None:
+            self.sim_logger.log_thought(
+                step=step,
+                agent_id=str(self.persona.id),
+                agent_name=self.persona.display_name,
+                role=self.persona.role,
+                thought=thought,
+                action_id=action_id,
+                short_term_memory=self.memory.get_short_term_context(),
+                long_term_memory=self.memory.long_term,
+            )
+
+        # 6. 觸發長期記憶彙整（非阻塞）
         if self.memory.should_consolidate():
             self._trigger_consolidation()
 
@@ -208,6 +228,15 @@ class MobileAgentLLM:
                 logger.info(
                     f"[Agent {self.persona.id}] long-term memory updated: {summary[:60]}..."
                 )
+                # 記錄長期記憶快照
+                if self.sim_logger is not None:
+                    self.sim_logger.log_memory_snapshot(
+                        step=-1,  # 非同步，step 不確定，用 -1 標示
+                        agent_id=str(self.persona.id),
+                        agent_name=self.persona.display_name,
+                        long_term_memory=summary,
+                        trigger="consolidation",
+                    )
             except Exception as e:
                 logger.error(f"[Agent {self.persona.id}] long-term memory consolidation failed: {e}")
 
