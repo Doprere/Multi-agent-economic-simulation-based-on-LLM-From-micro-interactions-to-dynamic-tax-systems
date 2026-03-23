@@ -45,7 +45,7 @@ class PersonaConfig:
 @dataclass
 class PlannerConfig:
     name: str = "Social Planner"
-    display_name: str = "社會規劃師"
+    display_name: str = "Social Planner"
     role: str = ""
     tax_period: int = 100
 

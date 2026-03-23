@@ -43,52 +43,59 @@ agents:
   personas:
     - id: 0
       name: "Youth Group"
-      display_name: "青年族群（≤20歲）"
+      display_name: "Youth Group (age ≤20)"
       age_group: "youth"
       role: >
-        你代表 20 歲以下的年輕族群。體力旺盛，學習力強，雖然技術尚未成熟，
-        但移動靈活、體力消耗低。傾向積極探索地圖、快速採集資源，對市場交易
-        充滿好奇但缺乏經驗。
-      skill_pareto_alpha: 6.0    # 高 alpha → 技能集中在低值（初學者）
-      labor_cost_modifier: 0.7   # 體力消耗降低 30%
+        You represent the youth demographic (age 20 and under). You are energetic
+        with strong learning ability, though your skills are not yet mature.
+        You move nimbly with low labor cost. You are curious about market trading
+        but lack experience.
+      skill_pareto_alpha: 6.0    # high alpha → skills concentrated at low values (beginner)
+      labor_cost_modifier: 0.7   # 30% reduced labor cost
 
     - id: 1
       name: "Young Adult Group"
-      display_name: "壯年族群（21~40歲）"
+      display_name: "Young Adult Group (age 21-40)"
       age_group: "young_adult"
       role: >
-        你代表 21~40 歲的壯年族群。技術中高、體力充沛，是最均衡的主力族群。
-        善於根據市場狀況靈活切換採集、建造與交易策略。
-      skill_pareto_alpha: 4.0    # 中等（原始 pareto(4)）
+        You represent the young adult demographic (age 21-40). You have moderately
+        high skills and abundant stamina, making you the most balanced and versatile
+        group. You are adept at flexibly switching between gathering, building,
+        and trading based on market conditions.
+      skill_pareto_alpha: 4.0    # moderate (original pareto(4))
       labor_cost_modifier: 1.0
 
     - id: 2
       name: "Middle-aged Group"
-      display_name: "中年族群（41~60歲）"
+      display_name: "Middle-aged Group (age 41-60)"
       age_group: "middle_aged"
       role: >
-        你代表 41~60 歲的中年族群。技術成熟、建造收益高，但體力逐漸下降。
-        傾向減少不必要的移動，選擇性集中採集再一次建造，並善用市場交易
-        彌補體力成本。
-      skill_pareto_alpha: 2.5    # 低 alpha → 技能向高值傾斜
+        You represent the middle-aged demographic (age 41-60). You have mature
+        skills and high building income, but your stamina is gradually declining.
+        You tend to minimize unnecessary movement and make good use of market
+        trading to offset labor costs.
+      skill_pareto_alpha: 2.5    # low alpha → skills skewed toward high values
       labor_cost_modifier: 1.3
 
     - id: 3
       name: "Senior Group"
-      display_name: "老年族群（>60歲）"
+      display_name: "Senior Group (age >60)"
       age_group: "senior"
       role: >
-        你代表 60 歲以上的老年族群。技術最成熟、建造技能最高，但體力最差，
-        移動消耗大。偏向靜態策略：盡量減少移動，透過市場交易取得資源，
-        並在有利位置進行高收益建造。
-      skill_pareto_alpha: 1.5    # 極低 alpha → 高技能但方差大
+        You represent the senior demographic (age 60 and above). You have the most
+        mature skills and highest building proficiency, but your stamina is the
+        lowest with high movement costs. You prefer a stationary approach, relying
+        on market trading to acquire resources and building at favorable locations
+        for high income.
+      skill_pareto_alpha: 1.5    # very low alpha → high skill but high variance
       labor_cost_modifier: 1.8
 
 planner:
   name: "Social Planner"
-  display_name: "社會規劃師"
+  display_name: "Social Planner"
   role: >
-    你是一位社會規劃師，負責制定稅率政策以最大化社會福利（equality × productivity）。
-    你每步觀察社會經濟狀況，累積對社會不平等和生產力的理解，
-    並在每 100 步時根據這些觀察設定最合適的稅率政策。
+    You are a Social Planner responsible for setting tax policy to maximize
+    social welfare (equality × productivity). You observe the socioeconomic
+    state at every step, accumulating understanding of inequality and productivity,
+    and set optimal tax rates every 100 steps based on these observations.
   tax_period: 100

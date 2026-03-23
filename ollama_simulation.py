@@ -45,6 +45,7 @@ from llm_agent.config import AppConfig, load_config, make_env_config
 from llm_agent.logger import SimulationLogger, setup_logging
 from llm_agent.ollama_client import OllamaClient
 from llm_agent.planner import PlannerLLM
+from llm_agent.translator import _extract_resource_positions, _direction_desc
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,67 @@ def _sample_random_actions(env, obs) -> tuple[dict[str, int], list[int]]:
     planner_action = [int(np.random.randint(0, int(d))) for d in dims]
 
     return agent_actions, planner_action
+
+
+# ──────────────────────────────────────────────────────────────
+#  資源鄰近偵測（驗證用）
+# ──────────────────────────────────────────────────────────────
+
+def _check_resource_adjacency(
+    env,
+    obs: dict,
+    cfg: AppConfig,
+    sim_logger: SimulationLogger,
+    agent_actions: dict[str, int],
+    agent_thoughts: dict[str, str],
+    step: int,
+) -> bool:
+    """
+    檢查是否有任何 agent 在資源旁（Manhattan dist=1）。
+    若有，記錄 adjacency event 並回傳 True（觸發地圖截圖）。
+    """
+    found_any = False
+
+    # 取得 channel 名稱順序
+    channel_names: list[str] | None = None
+    try:
+        channel_names = list(env.world.maps._maps.keys())
+    except AttributeError:
+        pass
+
+    for persona in cfg.personas:
+        agent_key = str(persona.id)
+        agent_obs = obs.get(agent_key, {})
+        _vm = agent_obs.get("world-map")
+        visible_map = _vm if _vm is not None else agent_obs.get("map")
+        if visible_map is None:
+            continue
+
+        resource_pos = _extract_resource_positions(
+            np.array(visible_map), channel_names=channel_names
+        )
+
+        for res_type, positions in resource_pos.items():
+            for r, c in positions:
+                dist = abs(r) + abs(c)
+                if dist == 1:
+                    direction = _direction_desc(r, c)
+                    sim_logger.log_adjacency_event(
+                        step=step,
+                        agent_id=agent_key,
+                        agent_name=persona.display_name,
+                        resource_type=res_type,
+                        direction=direction,
+                        agent_action=agent_actions.get(agent_key),
+                        agent_thought=agent_thoughts.get(agent_key, ""),
+                    )
+                    found_any = True
+                    logger.info(
+                        f"[Adjacency] Step {step}: Agent {agent_key}（{persona.display_name}）"
+                        f"旁有 {res_type}（{direction}），實際動作={agent_actions.get(agent_key)}"
+                    )
+
+    return found_any
 
 
 # ──────────────────────────────────────────────────────────────
@@ -208,6 +270,24 @@ async def run_episode(
                 # Agent 並行決策
                 agent_actions = await decide_batch(agents, obs, env, step)
 
+            # 資源鄰近偵測（使用 agent 決策時看到的 obs）
+            if not dry_run:
+                # 從最近的 thought_logs 中取出本步各 agent 的 thought
+                recent_thoughts: dict[str, str] = {}
+                for rec in reversed(sim_logger._thought_logs):
+                    if rec["step"] == step and rec["agent_id"] != "planner":
+                        recent_thoughts[rec["agent_id"]] = rec["thought"]
+                    if len(recent_thoughts) >= len(cfg.personas):
+                        break
+
+                has_adjacent = _check_resource_adjacency(
+                    env=env, obs=obs, cfg=cfg, sim_logger=sim_logger,
+                    agent_actions=agent_actions, agent_thoughts=recent_thoughts,
+                    step=step,
+                )
+                if has_adjacent:
+                    sim_logger.save_map_snapshot(step=step, env=env)
+
             # 建構 actions dict
             planner_env_action = _build_planner_action(env, planner_brackets)
             actions: dict = {
@@ -228,6 +308,10 @@ async def run_episode(
             )
             if planner_brackets is not None:
                 sim_logger.log_tax(step, planner_brackets)
+
+            # 每 20 步輸出地圖快照
+            if (step + 1) % 20 == 0 or step == 0:
+                sim_logger.save_map_snapshot(step=step, env=env)
 
             if done.get("__all__", False):
                 print(f"\n[Done] Episode 在步驟 {step} 結束（all done）")

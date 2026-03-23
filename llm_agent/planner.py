@@ -121,6 +121,16 @@ class PlannerLLM:
         step: int,
     ) -> None:
         """非稅收日：觀察並更新記憶，提交 NOOP。"""
+        # 記錄完整 prompt（供診斷）
+        if self.sim_logger is not None:
+            self.sim_logger.log_prompt(
+                step=step,
+                agent_id="planner",
+                agent_name=self.cfg.display_name,
+                system_prompt=self._observe_system_prompt(),
+                user_prompt=state_desc,
+                context=memory_ctx,
+            )
         try:
             result = await self.client.call_planner_observe(
                 system_prompt=self._observe_system_prompt(),
@@ -172,6 +182,17 @@ class PlannerLLM:
             f"Please set {n_brackets} tax bracket indices (each 0-21). "
             f"Output a list of exactly {n_brackets} integers."
         )
+
+        # 記錄完整 prompt（供診斷）
+        if self.sim_logger is not None:
+            self.sim_logger.log_prompt(
+                step=step,
+                agent_id="planner",
+                agent_name=self.cfg.display_name,
+                system_prompt=self._tax_system_prompt(),
+                user_prompt=user_prompt,
+                context=memory_ctx,
+            )
 
         try:
             result = await self.client.call_planner_tax(

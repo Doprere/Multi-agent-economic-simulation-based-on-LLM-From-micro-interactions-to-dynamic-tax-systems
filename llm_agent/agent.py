@@ -123,6 +123,17 @@ class MobileAgentLLM:
         # 2. 組裝context（短期記憶）
         short_ctx = self.memory.get_short_term_block()
 
+        # 2.5 記錄完整 prompt（供診斷）
+        if self.sim_logger is not None:
+            self.sim_logger.log_prompt(
+                step=step,
+                agent_id=str(self.persona.id),
+                agent_name=self.persona.display_name,
+                system_prompt=self._build_system_prompt(),
+                user_prompt=state_desc,
+                context=short_ctx,
+            )
+
         # 3. 呼叫 LLM（含 retry）
         thought, action_id = await self._call_with_validation(
             state_desc=state_desc,
@@ -173,13 +184,13 @@ class MobileAgentLLM:
         for attempt in range(max_retries):
             prompt = state_desc
             if retry_hint:
-                prompt += f"\n\n⚠️ 上次回應無效：{retry_hint}\n請重新選擇合法的 action_id。"
+                prompt += f"\n\nWARNING: Your last response was invalid: {retry_hint}\nPlease choose a valid action_id."
 
             try:
                 result = await self.client.call_agent(
                     system_prompt=self._build_system_prompt(),
                     user_prompt=prompt,
-                    context=short_ctx if attempt == 0 else "",
+                    context=short_ctx,
                 )
                 thought = str(result.get("thought", ""))
                 action_id = int(result.get("action_id", -1))
@@ -208,7 +219,7 @@ class MobileAgentLLM:
         logger.error(
             f"[Agent {self.persona.id}] all retries failed, fallback to random action {fallback}"
         )
-        return "（fallback：LLM 重試失敗）", fallback
+        return "(fallback: LLM retries exhausted)", fallback
 
     # ── 長期記憶彙整（非阻塞）────────────────────────────────
 

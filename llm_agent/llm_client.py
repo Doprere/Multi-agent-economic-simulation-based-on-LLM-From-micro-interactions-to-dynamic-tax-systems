@@ -31,11 +31,11 @@ AGENT_JSON_SCHEMA = {
             "properties": {
                 "thought": {
                     "type": "string",
-                    "description": "基於當前視野與資源狀況的推理過程"
+                    "description": "Reasoning based on current observations and resource status"
                 },
                 "action_id": {
                     "type": "integer",
-                    "description": "必須為環境定義之 Action ID (0-49)"
+                    "description": "Must be a valid Action ID defined by the environment (0-49)"
                 }
             },
             "required": ["thought", "action_id"],
@@ -54,12 +54,12 @@ PLANNER_TAX_JSON_SCHEMA = {
             "properties": {
                 "thought": {
                     "type": "string",
-                    "description": "稅率設定的推理與社會考量"
+                    "description": "Reasoning and social considerations for tax rate setting"
                 },
                 "tax_brackets": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "各稅率區間的索引值（0-21），長度須符合環境稅階數"
+                    "description": "Tax rate index for each bracket (0-21), length must match the number of brackets"
                 }
             },
             "required": ["thought", "tax_brackets"],
@@ -78,11 +78,11 @@ PLANNER_OBSERVE_JSON_SCHEMA = {
             "properties": {
                 "thought": {
                     "type": "string",
-                    "description": "社會規劃師的觀察與思考"
+                    "description": "The Social Planner's observation and reasoning"
                 },
                 "society_comment": {
                     "type": "string",
-                    "description": "對當前社會經濟狀況的評估與洞見"
+                    "description": "Assessment and insights on the current socioeconomic state"
                 }
             },
             "required": ["thought", "society_comment"],
@@ -101,7 +101,7 @@ CONSOLIDATION_SCHEMA = {
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "對過去決策思維的精簡總結（1-2句）"
+                    "description": "Concise summary of past decision thoughts (1-2 sentences)"
                 }
             },
             "required": ["summary"],
@@ -162,7 +162,7 @@ class LLMClient:
             messages.append({"role": "user", "content": context})
             messages.append({
                 "role": "assistant",
-                "content": "我已了解以上背景資訊，請告訴我當前狀態。"
+                "content": "Understood. Please provide the current state."
             })
         messages.append({"role": "user", "content": user_prompt})
 
@@ -177,19 +177,19 @@ class LLMClient:
                 )
                 content = response.choices[0].message.content
                 if content is None:
-                    raise ValueError("LLM 回傳空回應")
+                    raise ValueError("LLM returned empty response")
                 result = json.loads(content)
                 return result
 
             except openai.RateLimitError as e:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"[LLM] Rate limit（第 {attempt+1} 次），等待 {wait:.1f}s... {e}")
+                logger.warning(f"[LLM] 觸發速率限制（第 {attempt+1} 次），等待 {wait:.1f}s... {e}")
                 last_error = e
                 await asyncio.sleep(wait)
 
             except openai.APITimeoutError as e:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"[LLM] Timeout（第 {attempt+1} 次），等待 {wait:.1f}s... {e}")
+                logger.warning(f"[LLM] 逾時（第 {attempt+1} 次），等待 {wait:.1f}s... {e}")
                 last_error = e
                 await asyncio.sleep(wait)
 
@@ -240,7 +240,7 @@ class LLMClient:
     ) -> str:
         """呼叫長期記憶彙整（回傳 summary 字串）。"""
         result = await self.call(
-            system_prompt="你是一個記憶管理助手，請精確總結所提供的過去決策思維。",
+            system_prompt="You are a memory management assistant. Precisely summarize the provided past decision thoughts.",
             user_prompt=prompt,
             response_format=CONSOLIDATION_SCHEMA,
         )

@@ -1,0 +1,36 @@
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Environment / Secrets ──
+.env
+*.env
+credentials.json
+
+# ── Simulation outputs (large, per-run) ──
+simulation_results/
+
+# ── Research documents (not for public) ──
+*.pdf
+*.docx
+*.doc
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Claude Code internal (CLAUDE.md, memory, etc.) ──
+.claude/
+CLAUDE.md
+
+# ── OS ──
+Thumbs.db
+.DS_Store

@@ -44,7 +44,7 @@ def _extract_json(text: str) -> dict[str, Any]:
     # 從第一個 { 開始，追蹤大括號深度
     start = text.find("{")
     if start == -1:
-        raise ValueError(f"找不到 JSON 物件，原始輸出：{text[:200]}")
+        raise ValueError(f"No JSON object found, raw output: {text[:200]}")
 
     depth = 0
     for i, ch in enumerate(text[start:], start=start):
@@ -58,10 +58,10 @@ def _extract_json(text: str) -> dict[str, Any]:
                     return json.loads(candidate)
                 except json.JSONDecodeError as e:
                     raise ValueError(
-                        f"JSON 解析失敗：{e}\n原始片段：{candidate[:300]}"
+                        f"JSON parse failed: {e}\nRaw fragment: {candidate[:300]}"
                     ) from e
 
-    raise ValueError(f"未找到完整 JSON 物件，原始輸出：{text[:200]}")
+    raise ValueError(f"Incomplete JSON object, raw output: {text[:200]}")
 
 
 # ──────────────────────────────────────────────────────────────

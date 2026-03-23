@@ -42,7 +42,7 @@ class AgentMemory:
     def get_short_term_context(self) -> str:
         """格式化最近 N 步 thought，供 prompt 使用。"""
         if not self._short_term:
-            return "（尚無短期記憶）"
+            return "(no short-term memory yet)"
         lines = [
             f"  [{i+1}] {t}"
             for i, t in enumerate(self._short_term)
@@ -71,14 +71,14 @@ class AgentMemory:
     def build_consolidation_prompt(self, persona_name: str) -> str:
         """產生長期記憶彙整的 user prompt。"""
         thoughts_text = "\n".join(
-            f"[步驟 {i+1}] {t}"
+            f"[Step {i+1}] {t}"
             for i, t in enumerate(self._short_term)
         )
         return (
-            f"你是 {persona_name}，以下是你最近 {len(self._short_term)} 步的決策思維：\n"
+            f"You are {persona_name}. Below are your recent {len(self._short_term)} decision thoughts:\n"
             f"{thoughts_text}\n\n"
-            "請以 1-2 句話總結你目前的策略傾向與資源狀況，作為長期記憶保存。"
-            "只輸出總結文字，不要加任何前綴或後綴。"
+            "Summarize your current strategic tendencies and resource situation in 1-2 sentences "
+            "for long-term memory storage. Output only the summary text, no prefixes or suffixes."
         )
 
     # ── 組裝 Prompt 片段 ──────────────────────────────────────
@@ -87,12 +87,12 @@ class AgentMemory:
         """供 system prompt 使用的長期記憶區塊。"""
         if not self._long_term:
             return ""
-        return f"\n[長期記憶]\n{self._long_term}\n"
+        return f"\n[Long-term Memory]\n{self._long_term}\n"
 
     def get_short_term_block(self) -> str:
         """供 user prompt 使用的短期記憶區塊。"""
         ctx = self.get_short_term_context()
-        return f"\n[近期決策記憶（最新 {self._window} 步）]\n{ctx}\n"
+        return f"\n[Recent Decision Memory (last {self._window} steps)]\n{ctx}\n"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -118,9 +118,9 @@ class PlannerMemory:
             prev_entry: 前一步的記憶條目（可選，用於延伸記憶）
         """
         if prev_entry:
-            entry = f"[觀察] {obs_summary}\n[彙整前情] {prev_entry}"
+            entry = f"[Observation] {obs_summary}\n[Prior Context] {prev_entry}"
         else:
-            entry = f"[觀察] {obs_summary}"
+            entry = f"[Observation] {obs_summary}"
         self._entries.append(entry)
 
     def get_last_entry(self) -> str:
@@ -132,17 +132,17 @@ class PlannerMemory:
     def get_context(self) -> str:
         """回傳最近 N 步記憶的格式化字串，供稅收日 prompt 使用。"""
         if not self._entries:
-            return "（尚無歷史觀察記憶）"
+            return "(no observation history yet)"
         lines = []
         total = len(self._entries)
         for i, entry in enumerate(self._entries):
-            lines.append(f"--- 記憶 {i+1}/{total} ---\n{entry}")
+            lines.append(f"--- Memory {i+1}/{total} ---\n{entry}")
         return "\n\n".join(lines)
 
     def get_context_block(self) -> str:
         """完整格式化的記憶區塊，直接嵌入 prompt。"""
         ctx = self.get_context()
-        return f"\n[社會觀察記憶（最近 {self._window} 步）]\n{ctx}\n"
+        return f"\n[Social Observation Memory (last {self._window} steps)]\n{ctx}\n"
 
     @property
     def is_empty(self) -> bool:

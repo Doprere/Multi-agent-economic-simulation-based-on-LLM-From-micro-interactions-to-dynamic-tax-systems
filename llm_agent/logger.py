@@ -46,6 +46,8 @@ class SimulationLogger:
         # thought / 記憶 log（給 Excel）
         self._thought_logs: list[dict] = []  # agent 每步 thought
         self._memory_snapshots: list[dict] = []  # agent 記憶快照（長期記憶更新時）
+        self._prompt_logs: list[dict] = []  # 完整 LLM prompt 記錄
+        self._adjacency_events: list[dict] = []  # agent 在資源旁事件
 
     # ── 每步記錄 ──────────────────────────────────────────────
 
@@ -178,7 +180,178 @@ class SimulationLogger:
             "long_term_memory": long_term_memory,
         })
 
+    def log_prompt(
+        self,
+        step: int,
+        agent_id: str,
+        agent_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        context: str = "",
+    ) -> None:
+        """記錄送給 LLM 的完整 prompt（供診斷用）。"""
+        self._prompt_logs.append({
+            "step": step,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "context": context,
+        })
+
+    def log_adjacency_event(
+        self,
+        step: int,
+        agent_id: str,
+        agent_name: str,
+        resource_type: str,
+        direction: str,
+        agent_action: int | None = None,
+        agent_thought: str = "",
+    ) -> None:
+        """記錄 agent 在資源旁（距離=1）的事件。"""
+        self._adjacency_events.append({
+            "step": step,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "resource_type": resource_type,
+            "direction": direction,
+            "agent_action": agent_action if agent_action is not None else "",
+            "agent_thought": agent_thought,
+        })
+
+    def save_map_snapshot(self, step: int, env) -> None:
+        """
+        輸出當步地圖快照到 {run_dir}/maps/{step}.png。
+        包含：全域地圖（資源＋agent 位置）及各 agent 的 egocentric 視圖。
+        """
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            import matplotlib.patches as mpatches
+        except ImportError:
+            logger.warning("[Logger] matplotlib 未安裝，跳過地圖快照")
+            return
+
+        run_dir = self.output_dir / self.run_name
+        maps_dir = run_dir / "maps"
+        maps_dir.mkdir(parents=True, exist_ok=True)
+
+        # ── 地圖資料 ─────────────────────────────────────────────
+        maps_state = env.world.maps.state           # (n_ch, H, W)
+        channel_names: list[str] = []
+        try:
+            channel_names = list(env.world.maps._maps.keys())
+        except AttributeError:
+            channel_names = [f"ch{i}" for i in range(maps_state.shape[0])]
+
+        W_idx  = next((i for i, n in enumerate(channel_names) if n == "Wood"), None)
+        S_idx  = next((i for i, n in enumerate(channel_names) if n == "Stone"), None)
+        H_idx  = next((i for i, n in enumerate(channel_names) if n in ("House", "house")), None)
+        Wa_idx = next((i for i, n in enumerate(channel_names) if n == "Water"), None)
+
+        agents = list(env.world.agents)
+        n_agents = len(agents)
+        AGENT_COLORS = ["#FF6B6B", "#4ECDC4", "#FFE66D", "#A29BFE",
+                        "#FF8C42", "#2ECC71", "#E74C3C", "#9B59B6"]
+        BG, HEADER_BG = "#0f0f23", "#1a1a2e"
+
+        def _make_composite(state: np.ndarray) -> np.ndarray:
+            comp = np.zeros((state.shape[1], state.shape[2], 3))
+            if W_idx is not None:
+                comp[:, :, 1] += np.clip(state[W_idx], 0, 1) * 0.75
+            if S_idx is not None:
+                layer = np.clip(state[S_idx], 0, 1)
+                comp[:, :, 0] += layer * 0.55
+                comp[:, :, 2] += layer * 0.55
+            if H_idx is not None:
+                comp[:, :, 0] += np.clip(state[H_idx], 0, 1)
+            if Wa_idx is not None:
+                comp[:, :, 2] += np.clip(state[Wa_idx], 0, 1) * 0.9
+            return np.clip(comp, 0, 1)
+
+        composite = _make_composite(maps_state)
+
+        # ── 圖表：1 全域 + n_agents 個自我中心 ───────────────────
+        ncols = 1 + n_agents
+        fig, axes = plt.subplots(1, ncols, figsize=(5 * ncols, 6), facecolor=HEADER_BG)
+        if ncols == 1:
+            axes = [axes]
+
+        # 全域地圖
+        ax0 = axes[0]
+        ax0.set_facecolor(BG)
+        ax0.imshow(composite, interpolation="nearest", aspect="equal")
+        for agent in agents:
+            r, c = agent.loc
+            color = AGENT_COLORS[agent.idx % len(AGENT_COLORS)]
+            ax0.scatter(c, r, s=220, color=color, edgecolors="white", linewidths=1.2, zorder=5)
+            ax0.text(c + 0.4, r - 0.6, str(agent.idx),
+                     color="white", fontsize=7, fontweight="bold", zorder=6)
+        ax0.set_title(f"Step {step} — Global Map", color="white", fontsize=11, pad=6)
+        ax0.tick_params(colors="white", labelsize=6)
+        for sp in ax0.spines.values():
+            sp.set_edgecolor("#555555")
+        patches = [
+            mpatches.Patch(color="#00CC44", label="Wood"),
+            mpatches.Patch(color="#8844BB", label="Stone"),
+            mpatches.Patch(color="#FF4444", label="House"),
+            mpatches.Patch(color="#2255FF", label="Water"),
+        ]
+        for a in agents:
+            patches.append(mpatches.Patch(
+                color=AGENT_COLORS[a.idx % len(AGENT_COLORS)],
+                label=f"A{a.idx} ({a.loc[0]},{a.loc[1]})",
+            ))
+        ax0.legend(handles=patches, loc="upper right", framealpha=0.55,
+                   facecolor=HEADER_BG, labelcolor="white", fontsize=6,
+                   handlelength=1.0, borderpad=0.4)
+
+        # 各 agent egocentric 視圖
+        try:
+            obs = env._generate_observations()
+        except Exception:
+            obs = {}
+
+        for i, agent in enumerate(agents):
+            ax = axes[1 + i]
+            ax.set_facecolor(BG)
+            agent_obs = obs.get(str(agent.idx), {})
+            _vm = agent_obs.get("world-map")
+            vismap = _vm if _vm is not None else agent_obs.get("map")
+            if vismap is not None:
+                ego = _make_composite(np.array(vismap))
+                ax.imshow(ego, interpolation="nearest", aspect="equal")
+                ch_c, cw_c = ego.shape[0] // 2, ego.shape[1] // 2
+                ax.scatter(cw_c, ch_c, s=200,
+                           color=AGENT_COLORS[agent.idx % len(AGENT_COLORS)],
+                           edgecolors="white", linewidths=1.5, zorder=5, marker="*")
+            else:
+                ax.text(0.5, 0.5, "No ego map", transform=ax.transAxes,
+                        ha="center", va="center", color="#FF6B6B", fontsize=9)
+
+            inv = agent.inventory
+            ax.set_title(
+                f"A{agent.idx}  Coin:{inv.get('Coin',0):.0f} "
+                f"W:{inv.get('Wood',0)} S:{inv.get('Stone',0)}",
+                color=AGENT_COLORS[agent.idx % len(AGENT_COLORS)], fontsize=8, pad=4,
+            )
+            ax.tick_params(colors="white", labelsize=5)
+            for sp in ax.spines.values():
+                sp.set_edgecolor("#555555")
+
+        plt.suptitle(f"AI Economist — Map Snapshot  Step {step}",
+                     color="white", fontsize=13, y=1.01, fontweight="bold")
+        plt.tight_layout(pad=1.0)
+        out_path = maps_dir / f"{step}.png"
+        plt.savefig(out_path, dpi=130, bbox_inches="tight",
+                    facecolor=HEADER_BG, edgecolor="none")
+        plt.close(fig)
+        logger.info(f"[Logger] 地圖快照已儲存: {out_path}")
+
     # ── 輸出 ──────────────────────────────────────────────────
+
 
     def save(self) -> None:
         """將所有記錄輸出至 CSV、JSON 和 Excel。"""
@@ -200,11 +373,18 @@ class SimulationLogger:
         with open(run_dir / "summary.json", "w", encoding="utf-8") as f:
             json.dump(summary, f, ensure_ascii=False, indent=2)
 
-        # Excel 輸出（thought + 記憶）
+        # Excel 輸出（thought + 記憶 + prompt + adjacency）
         if _HAS_OPENPYXL and self._thought_logs:
             xlsx_path = run_dir / "agent_thoughts.xlsx"
-            _write_thoughts_excel(xlsx_path, self._thought_logs, self._memory_snapshots, self._step_logs)
+            _write_thoughts_excel(
+                xlsx_path, self._thought_logs, self._memory_snapshots,
+                self._step_logs, self._prompt_logs, self._adjacency_events,
+            )
             print(f"  - agent_thoughts.xlsx ({len(self._thought_logs)} 筆 thought)")
+            if self._prompt_logs:
+                print(f"    └ LLM Prompts 工作表：{len(self._prompt_logs)} 筆")
+            if self._adjacency_events:
+                print(f"    └ 資源鄰近事件工作表：{len(self._adjacency_events)} 筆")
         elif not _HAS_OPENPYXL:
             print("  [警告] 未安裝 openpyxl，跳過 Excel 輸出。請執行：pip install openpyxl")
 
@@ -264,6 +444,8 @@ def _write_thoughts_excel(
     thought_logs: list[dict],
     memory_snapshots: list[dict],
     step_logs: list[dict],
+    prompt_logs: list[dict] | None = None,
+    adjacency_events: list[dict] | None = None,
 ) -> None:
     """
     輸出研究者友善的 Excel：
@@ -292,6 +474,12 @@ def _write_thoughts_excel(
     CENTER = Alignment(horizontal="center", vertical="top")
     thin = Side(style="thin", color="CCCCCC")
     BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _safe_cell_value(value):
+        """防止 Excel 將 '=' 開頭的字串誤判為公式。"""
+        if isinstance(value, str) and value.startswith("="):
+            return " " + value
+        return value
 
     def _header_row(ws, headers: list[str]) -> None:
         ws.append(headers)
@@ -330,11 +518,11 @@ def _write_thoughts_excel(
                 rec["step"],
                 rec["agent_id"],
                 rec["agent_name"],
-                rec["role"],
-                rec["thought"],
+                _safe_cell_value(rec["role"]),
+                _safe_cell_value(rec["thought"]),
                 rec["action_id"],
-                rec["short_term_memory"],
-                rec["long_term_memory"],
+                _safe_cell_value(rec["short_term_memory"]),
+                _safe_cell_value(rec["long_term_memory"]),
             ]
             ws1.append(row)
             ri = ws1.max_row
@@ -367,10 +555,10 @@ def _write_thoughts_excel(
         row = [
             rec["step"],
             "✅ 稅收日" if is_tax else "觀察",
-            rec["thought"],
-            rec.get("society_comment", ""),
+            _safe_cell_value(rec["thought"]),
+            _safe_cell_value(rec.get("society_comment", "")),
             rec.get("tax_brackets", ""),
-            rec.get("short_term_memory", ""),
+            _safe_cell_value(rec.get("short_term_memory", "")),
         ]
         ws2.append(row)
         ri = ws2.max_row
@@ -395,7 +583,7 @@ def _write_thoughts_excel(
     for rec in memory_snapshots:
         row = [
             rec["step"], rec["agent_id"], rec["agent_name"],
-            rec["trigger"], rec["long_term_memory"],
+            rec["trigger"], _safe_cell_value(rec["long_term_memory"]),
         ]
         ws3.append(row)
         ri = ws3.max_row
@@ -425,6 +613,72 @@ def _write_thoughts_excel(
             for c in range(1, len(headers4) + 1):
                 ws4.cell(row=ri, column=c).border = BORDER
                 ws4.cell(row=ri, column=c).alignment = CENTER
+
+    # ── Sheet 5: LLM Prompts（完整提示詞記錄）────────────────
+    if prompt_logs:
+        ws5 = wb.create_sheet("LLM Prompts")
+        headers5 = [
+            "Step", "Agent ID", "Agent Name",
+            "System Prompt（系統提示詞）",
+            "User Prompt（觀察/狀態描述）",
+            "Context（記憶背景）",
+        ]
+        _header_row(ws5, headers5)
+        col_widths5 = [7, 9, 14, 60, 80, 50]
+        for i, w in enumerate(col_widths5, 1):
+            ws5.column_dimensions[get_column_letter(i)].width = w
+
+        for rec in prompt_logs:
+            row = [
+                rec["step"],
+                rec["agent_id"],
+                rec["agent_name"],
+                _safe_cell_value(rec["system_prompt"]),
+                _safe_cell_value(rec["user_prompt"]),
+                _safe_cell_value(rec["context"]),
+            ]
+            ws5.append(row)
+            ri = ws5.max_row
+            fill = AGENT_FILLS.get(str(rec["agent_id"]), PatternFill())
+            for c in range(1, len(headers5) + 1):
+                cell = ws5.cell(row=ri, column=c)
+                cell.fill = fill
+                cell.border = BORDER
+                cell.alignment = WRAP
+            ws5.row_dimensions[ri].height = 80
+
+    # ── Sheet 6: Adjacency Events（資源鄰近事件）──────────────
+    if adjacency_events:
+        ws6 = wb.create_sheet("Resource Adjacency")
+        headers6 = [
+            "Step", "Agent ID", "Agent Name",
+            "資源類型", "方向", "實際動作 ID",
+            "Agent Thought（決策思維）",
+        ]
+        _header_row(ws6, headers6)
+        col_widths6 = [7, 9, 14, 10, 20, 10, 60]
+        for i, w in enumerate(col_widths6, 1):
+            ws6.column_dimensions[get_column_letter(i)].width = w
+
+        for rec in adjacency_events:
+            row = [
+                rec["step"],
+                rec["agent_id"],
+                rec["agent_name"],
+                rec["resource_type"],
+                rec["direction"],
+                rec["agent_action"],
+                _safe_cell_value(rec["agent_thought"]),
+            ]
+            ws6.append(row)
+            ri = ws6.max_row
+            fill = AGENT_FILLS.get(str(rec["agent_id"]), PatternFill())
+            for c in range(1, len(headers6) + 1):
+                cell = ws6.cell(row=ri, column=c)
+                cell.fill = fill
+                cell.border = BORDER
+                cell.alignment = WRAP
+            ws6.row_dimensions[ri].height = 50
 
     wb.save(path)
     logger.info(f"[Logger] Excel 已儲存：{path}")

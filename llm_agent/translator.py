@@ -45,18 +45,52 @@ def _extract_resource_positions(visible_map: np.ndarray, channel_names: list[str
     return resources_found
 
 
+def _direction_desc(r: int, c: int) -> str:
+    """Convert relative (row, col) offset to human-readable direction description.
+
+    Positive row = South, positive col = East.
+    """
+    dist = abs(r) + abs(c)
+    if dist == 0:
+        return "on your tile (dist=0)"
+    if dist == 1:
+        # Adjacent tile — reachable next step
+        if r == -1:
+            direction = "immediately North"
+        elif r == 1:
+            direction = "immediately South"
+        elif c == -1:
+            direction = "immediately West"
+        else:
+            direction = "immediately East"
+        return f"{direction} — nearby (reachable next step!)"
+
+    # Multi-step: describe with direction language
+    parts = []
+    if r < 0:
+        parts.append(f"{abs(r)} North")
+    elif r > 0:
+        parts.append(f"{abs(r)} South")
+    if c < 0:
+        parts.append(f"{abs(c)} West")
+    elif c > 0:
+        parts.append(f"{abs(c)} East")
+    return f"{dist} steps away ({', '.join(parts)})"
+
+
 def _format_positions(positions: list[tuple]) -> str:
+    """Format resource positions with direction language relative to agent.
+
+    Adjacent tiles (dist=1) are marked as 'nearby (reachable next step!)'.
+    Others use direction language like '5 steps away (3 South, 2 West)'.
+    """
     if not positions:
         return "none visible"
     parts = []
-    for r, c in positions[:5]:
-        dist = abs(r) + abs(c)
-        v_dir = ("S" if r > 0 else "N") if r != 0 else ""
-        h_dir = ("E" if c > 0 else "W") if c != 0 else ""
-        direction = f"{v_dir}{h_dir}" if (v_dir or h_dir) else "here"
-        parts.append(f"{direction}+{dist}")
-    suffix = f" (+{len(positions)-5} more)" if len(positions) > 5 else ""
-    return ", ".join(parts) + suffix
+    for r, c in sorted(positions, key=lambda p: abs(p[0]) + abs(p[1]))[:8]:
+        parts.append(_direction_desc(r, c))
+    suffix = f" (+{len(positions)-8} more)" if len(positions) > 8 else ""
+    return "; ".join(parts) + suffix
 
 
 def _extract_market_info(obs: dict) -> dict:
@@ -170,6 +204,18 @@ class ObsTranslator:
             f"=== Step {step}/1000 | Agent {agent_id} ({agent_name}) ===",
             f"Role: {agent_role.strip()}",
             "",
+            "[Game Rules]",
+            "  - Movement: Left(46), Right(47), Up(48), Down(49). Each move costs labor.",
+            "  - Gathering: Move onto a resource tile (dist=0) to collect automatically.",
+            "  - Building: Requires 1 Wood + 1 Stone. Earns Coin based on your build skill. Action 1.",
+            "  - Trading: Submit buy/sell orders on the market. A trade executes when a bid >= an ask.",
+            "    Buy Wood (actions 2-12): Spend Coin to buy Wood at bid price 0-10.",
+            "    Sell Wood (actions 13-23): Sell your Wood at ask price 0-10.",
+            "    Buy Stone (actions 24-34): Spend Coin to buy Stone at bid price 0-10.",
+            "    Sell Stone (actions 35-45): Sell your Stone at ask price 0-10.",
+            "  - Ways to earn Coin: Build houses OR sell resources to other agents on the market.",
+            "  - NOOP (action 0): Do nothing this step.",
+            "",
             "[Personal Status]",
             f"  Location  : row={loc[0]}, col={loc[1]}",
             f"  Inventory : Coin={inv.get('Coin', 0):.1f}, "
@@ -177,7 +223,7 @@ class ObsTranslator:
             f"  Labor used: {labor:.2f}",
             f"  Build income per house: {build_pay_str}",
             "",
-            "[Visible Area (11x11 egocentric, relative direction+distance)]",
+            "[Visible Resources]",
             f"  Wood  : {w_pos}",
             f"  Stone : {s_pos}",
             "",
