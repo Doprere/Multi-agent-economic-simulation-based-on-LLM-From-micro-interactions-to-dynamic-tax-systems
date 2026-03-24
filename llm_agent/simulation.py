@@ -22,6 +22,8 @@ if hasattr(sys.stdout, "buffer"):
 if hasattr(sys.stderr, "buffer"):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+from copy import deepcopy
+
 import numpy as np
 
 # 確保可從 project 根目錄執行
@@ -46,7 +48,7 @@ logger = logging.getLogger(__name__)
 def _apply_age_group_skills(env, cfg: AppConfig) -> None:
     """
     根據 Persona 的 skill_pareto_alpha 與 labor_cost_modifier，
-    重新設定各 Agent 的建造技能與勞動消耗係數。
+    重新設定各 Agent 的建造技能與勞動消耗係數，並注入初始 Coin 稟賦。
 
     此函數在 env.reset() 之後呼叫，覆蓋預設的技能抽樣結果。
     """
@@ -74,11 +76,33 @@ def _apply_age_group_skills(env, cfg: AppConfig) -> None:
         # 在 simulation loop 中每步結束後補償勞動消耗。
         agent.state["labor_cost_modifier"] = persona.labor_cost_modifier
 
+        # --- Initial coin endowment (lifecycle savings) ---
+        lo = persona.endowment_coin_min
+        hi = persona.endowment_coin_max
+        assert lo >= 0 and hi >= 0 and lo <= hi, (
+            f"Invalid endowment range for {persona.name}: [{lo}, {hi}]"
+        )
+        if hi > 0:
+            endowment = float(np.random.uniform(lo, hi))
+            agent.state["inventory"]["Coin"] += endowment
+        else:
+            endowment = 0.0
+
         logger.info(
             f"[Init] Agent {persona.id}（{persona.display_name}）"
             f"build_payment={agent.state['build_payment']:.2f}, "
-            f"labor_modifier={persona.labor_cost_modifier}"
+            f"labor_modifier={persona.labor_cost_modifier}, "
+            f"initial_coin={agent.state['inventory']['Coin']:.1f}"
         )
+
+    # --- Recalculate reward baseline after endowment injection ---
+    # Without this, step 0 reward would include a massive one-time spike
+    # from isoelastic_utility(coin_with_endowment) - isoelastic_utility(0)
+    curr = env.get_current_optimization_metrics()
+    env.curr_optimization_metric = deepcopy(curr)
+    env.init_optimization_metric = deepcopy(curr)
+    env.prev_optimization_metric = deepcopy(curr)
+    logger.info("[Init] Optimization metric baseline recalculated after endowment injection")
 
 
 def _apply_labor_modifier(env) -> None:

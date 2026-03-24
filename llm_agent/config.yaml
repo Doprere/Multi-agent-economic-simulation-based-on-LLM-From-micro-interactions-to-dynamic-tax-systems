@@ -52,6 +52,8 @@ agents:
         but lack experience.
       skill_pareto_alpha: 6.0    # high alpha → skills concentrated at low values (beginner)
       labor_cost_modifier: 0.7   # 30% reduced labor cost
+      endowment_coin_min: 0
+      endowment_coin_max: 0
 
     - id: 1
       name: "Young Adult Group"
@@ -64,6 +66,8 @@ agents:
         and trading based on market conditions.
       skill_pareto_alpha: 4.0    # moderate (original pareto(4))
       labor_cost_modifier: 1.0
+      endowment_coin_min: 0
+      endowment_coin_max: 0
 
     - id: 2
       name: "Middle-aged Group"
@@ -76,6 +80,8 @@ agents:
         trading to offset labor costs.
       skill_pareto_alpha: 2.5    # low alpha → skills skewed toward high values
       labor_cost_modifier: 1.3
+      endowment_coin_min: 20     # lifecycle savings: moderate accumulation
+      endowment_coin_max: 50
 
     - id: 3
       name: "Senior Group"
@@ -89,6 +95,8 @@ agents:
         for high income.
       skill_pareto_alpha: 1.5    # very low alpha → high skill but high variance
       labor_cost_modifier: 1.8
+      endowment_coin_min: 50     # lifecycle savings: substantial accumulation
+      endowment_coin_max: 100
 
 planner:
   name: "Social Planner"

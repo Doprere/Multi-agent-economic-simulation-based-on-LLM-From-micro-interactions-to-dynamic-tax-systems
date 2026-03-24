@@ -40,6 +40,8 @@ class PersonaConfig:
     role: str
     skill_pareto_alpha: float
     labor_cost_modifier: float
+    endowment_coin_min: float = 0.0
+    endowment_coin_max: float = 0.0
 
 
 @dataclass
