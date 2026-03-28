@@ -44,37 +44,35 @@ def _extract_resource_positions(visible_map: np.ndarray, channel_names: list[str
             resources_found[name].append((rel_r, rel_c))
     return resources_found
 
-
 def _direction_desc(r: int, c: int) -> str:
-    """Convert relative (row, col) offset to human-readable direction description.
+    """Convert relative (row, col) offset to human-readable direction.
 
-    Positive row = South, positive col = East.
+    Row decrease = Up, row increase = Down.
+    Col decrease = Left, col increase = Right.
     """
     dist = abs(r) + abs(c)
     if dist == 0:
         return "on your tile (dist=0)"
     if dist == 1:
-        # Adjacent tile — reachable next step
         if r == -1:
-            direction = "immediately North"
+            direction = "immediately Up — reachable via Move Up (action 48)"
         elif r == 1:
-            direction = "immediately South"
+            direction = "immediately Down — reachable via Move Down (action 49)"
         elif c == -1:
-            direction = "immediately West"
+            direction = "immediately Left — reachable via Move Left (action 46)"
         else:
-            direction = "immediately East"
-        return f"{direction} — nearby (reachable next step!)"
+            direction = "immediately Right — reachable via Move Right (action 47)"
+        return direction
 
-    # Multi-step: describe with direction language
     parts = []
     if r < 0:
-        parts.append(f"{abs(r)} North")
+        parts.append(f"{abs(r)} Up")
     elif r > 0:
-        parts.append(f"{abs(r)} South")
+        parts.append(f"{abs(r)} Down")
     if c < 0:
-        parts.append(f"{abs(c)} West")
+        parts.append(f"{abs(c)} Left")
     elif c > 0:
-        parts.append(f"{abs(c)} East")
+        parts.append(f"{abs(c)} Right")
     return f"{dist} steps away ({', '.join(parts)})"
 
 
@@ -208,11 +206,13 @@ class ObsTranslator:
             "  - Movement: Left(46), Right(47), Up(48), Down(49). Each move costs labor.",
             "  - Gathering: Move onto a resource tile (dist=0) to collect automatically.",
             "  - Building: Requires 1 Wood + 1 Stone. Earns Coin based on your build skill. Action 1.",
-            "  - Trading: Submit buy/sell orders on the market. A trade executes when a bid >= an ask.",
-            "    Buy Wood (actions 2-12): Spend Coin to buy Wood at bid price 0-10.",
-            "    Sell Wood (actions 13-23): Sell your Wood at ask price 0-10.",
-            "    Buy Stone (actions 24-34): Spend Coin to buy Stone at bid price 0-10.",
-            "    Sell Stone (actions 35-45): Sell your Stone at ask price 0-10.",
+            "  - Trading: Buy/sell resources on the market.",
+            "    Buy Stone (actions 2-12, bid price 0-10) | Sell Stone (actions 13-23, ask price 0-10)",
+            "    Buy Wood (actions 24-34, bid price 0-10) | Sell Wood (actions 35-45, ask price 0-10)",
+            "    * BUY locks your Coin in escrow. SELL locks 1 resource. Orders expire after 50 steps.",
+            "    * Trade executes when bid price >= ask price. Each order costs 0.25 labor.",
+            "    * To buy quickly: bid >= lowest ask. To sell quickly: ask <= highest bid.",
+            "    * Bidding at price 0 almost never works.",
             "  - Ways to earn Coin: Build houses OR sell resources to other agents on the market.",
             "  - NOOP (action 0): Do nothing this step.",
             "",
@@ -222,6 +222,11 @@ class ObsTranslator:
             f"Wood={inv.get('Wood', 0)}, Stone={inv.get('Stone', 0)}",
             f"  Labor used: {labor:.2f}",
             f"  Build income per house: {build_pay_str}",
+            "",
+            "[Wellbeing Sense]",
+            f"  Current wealth: {inv.get('Coin', 0):.1f} Coin",
+            f"  Accumulated fatigue: {labor:.2f}"
+            f"  (effective value accounting for your stamina modifier={agent.state.get('labor_cost_modifier', 1.0)})",
             "",
             "[Visible Resources]",
             f"  Wood  : {w_pos}",
@@ -235,10 +240,53 @@ class ObsTranslator:
             f"  My open orders — Wood: {wm.get('my_bids_count',0)} buy / "
             f"{wm.get('my_asks_count',0)} sell  |  "
             f"Stone: {sm.get('my_bids_count',0)} buy / {sm.get('my_asks_count',0)} sell",
-            "",
-            "[Valid Actions] (only choose from the action_ids listed below)",
-            get_masked_description(mask),
         ]
+
+        # Order limit warnings
+        try:
+            cda_comp = env.get_component("ContinuousDoubleAuction")
+            max_orders = cda_comp.max_num_orders
+        except (KeyError, AttributeError):
+            max_orders = 5  # fallback to config default
+
+        for res, m in [("Wood", wm), ("Stone", sm)]:
+            total = m.get("my_bids_count", 0) + m.get("my_asks_count", 0)
+            if total >= max_orders:
+                lines.append(
+                    f"  WARNING: You have {total}/{max_orders} open orders for {res} — "
+                    f"no more {res} orders until existing ones fill or expire!"
+                )
+
+        # Dynamic pricing tips based on current market state
+        w_ask = wm.get("lowest_ask")
+        w_bid = wm.get("highest_bid")
+        s_ask = sm.get("lowest_ask")
+        s_bid = sm.get("highest_bid")
+        if w_ask is not None or w_bid is not None or s_ask is not None or s_bid is not None:
+            lines.append("  Quick reference:")
+            if w_ask is not None:
+                lines.append(f"    -> To buy Wood now, bid >= {w_ask} Coin (match the lowest ask)")
+            if w_bid is not None:
+                lines.append(f"    -> To sell Wood now, ask <= {w_bid} Coin (match the highest bid)")
+            if s_ask is not None:
+                lines.append(f"    -> To buy Stone now, bid >= {s_ask} Coin (match the lowest ask)")
+            if s_bid is not None:
+                lines.append(f"    -> To sell Stone now, ask <= {s_bid} Coin (match the highest bid)")
+
+        # Show blocked movement directions
+        blocked_dirs = []
+        move_labels = {46: "Left", 47: "Right", 48: "Up", 49: "Down"}
+        for aid, label in move_labels.items():
+            if aid < len(mask) and mask[aid] == 0:
+                blocked_dirs.append(label)
+
+        lines += [
+            "",
+            "[Valid Actions] *** You MUST choose ONLY from the action_ids below. Any other action_id will be rejected. ***",
+        ]
+        if blocked_dirs:
+            lines.append(f"  [Blocked directions: {', '.join(blocked_dirs)} — wall, water, or occupied]")
+        lines.append(get_masked_description(mask))
         return "\n".join(lines)
 
     def translate_planner_obs(

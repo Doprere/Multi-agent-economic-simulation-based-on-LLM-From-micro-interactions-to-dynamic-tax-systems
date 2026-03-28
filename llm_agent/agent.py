@@ -34,17 +34,23 @@ if TYPE_CHECKING:
 FEW_SHOT_EXAMPLES = """
 Here are a few response examples (action_id MUST be from the valid action list):
 
-Example 1 (gather):
-{{"thought": "Wood is 2 tiles to the East, my Wood=0. I need it to build. Moving right to collect.", "action_id": 47}}
+Example 1 (gather — move toward resource):
+{{"thought": "Wood is 2 tiles to the Right, my Wood=0. I need it to build. Moving right to collect.", "action_id": 47}}
 
-Example 2 (build):
-{{"thought": "I have Wood=2, Stone=1. Current tile has no landmark. Building now earns 15 Coin.", "action_id": 1}}
+Example 2 (gather — move toward distant resource):
+{{"thought": "Stone is 3 steps away (2 Down, 1 Right). No resources nearby. Moving Down first to get closer.", "action_id": 49}}
 
-Example 3 (sell on market):
-{{"thought": "I have Stone=3 which exceeds build needs. highest Stone bid is 7 Coin. Selling at ask 6 for profit.", "action_id": 40}}
+Example 3 (build):
+{{"thought": "I have Wood=1, Stone=1. Building now earns 15 Coin — worth the labor.", "action_id": 1}}
 
-Example 4 (NOOP):
-{{"thought": "No nearby resources, cannot build, open orders at limit. Waiting.", "action_id": 0}}
+Example 4 (buy on market):
+{{"thought": "I need Stone to build. Lowest ask for Stone is 4 Coin. I'll bid 4 to match and buy immediately.", "action_id": 6}}
+
+Example 5 (sell on market):
+{{"thought": "I have Stone=3 which exceeds my build needs. Highest bid for Stone is 5 Coin. I'll ask 5 to sell immediately.", "action_id": 18}}
+
+Example 6 (NOOP — only when truly idle):
+{{"thought": "No resources visible, cannot build, all orders pending. Nothing productive to do this step.", "action_id": 0}}
 """
 
 
@@ -81,14 +87,31 @@ class MobileAgentLLM:
 
     def _build_system_prompt(self) -> str:
         p = self.persona
+
+        # Map labor_cost_modifier to natural-language stamina description
+        lcm = getattr(p, "labor_cost_modifier", 1.0)
+        if lcm <= 0.7:
+            stamina = "You have good stamina — physical tasks cost you relatively little effort."
+        elif lcm <= 1.0:
+            stamina = "Physical tasks require a moderate amount of effort."
+        elif lcm <= 1.3:
+            stamina = "Physical tasks require more effort than they used to."
+        else:
+            stamina = "Physical tasks cost you more effort than most — pace yourself accordingly."
+
         base = (
             f"You are an Agent in the AI Economist simulation, representing '{p.display_name}'.\n"
             f"Your role: {p.role.strip()}\n\n"
-            "Your goal is to maximize your own utility (diminishing marginal utility of Coin minus labor cost).\n\n"
+            "Your happiness = Coin earned minus effort spent.\n"
+            "- Gather Wood and Stone, then Build houses or Sell on market to earn Coin.\n"
+            "- Every action (moving, gathering, building, trading) costs some labor.\n"
+            "- Spending labor to gather and build is an investment — it pays off in Coin.\n"
+            f"{stamina}\n\n"
             "Decision rules:\n"
-            "1. Choose exactly ONE action_id per step. It MUST appear in the valid action list.\n"
-            "2. Actions not in the valid list are masked by the environment and will have no effect.\n"
-            "3. Output MUST be strict JSON: {\"thought\": \"...\", \"action_id\": <integer>}\n\n"
+            "1. Choose exactly ONE action_id per step. It MUST appear in the [Valid Actions] list.\n"
+            "2. IMPORTANT: If an action_id is NOT in the [Valid Actions] list, it is BLOCKED by the environment and your turn will be wasted. Always check the list before choosing.\n"
+            "3. Movement directions may be blocked by walls, water, or other agents. If a direction is not in [Valid Actions], do NOT attempt it — choose a different direction or action.\n"
+            "4. Output MUST be strict JSON: {\"thought\": \"...\", \"action_id\": <integer>}\n\n"
             f"{FEW_SHOT_EXAMPLES}"
         )
         if self.memory.has_long_term:

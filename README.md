@@ -38,25 +38,55 @@ Traditional RL-based economic simulations require extensive training and produce
 
 ### Agent Decision Pipeline
 
-1. **Observation Translation** — Raw env observations → English natural language descriptions (resource locations, market status, valid actions, game rules)
+1. **Observation Translation** — Raw env observations → English natural language (resource positions with directions & action IDs, market status with pricing tips, valid actions with blocked directions, game rules)
 2. **Memory Assembly** — Short-term (sliding window, 8 steps) + Long-term (async LLM consolidation every 10 steps)
-3. **LLM Call** — System prompt (persona + rules) + User prompt (state) + Context (memory) → JSON response
-4. **Action Validation** — Verify `action_id` against environment action mask; retry or fallback on invalid
+3. **LLM Call** — System prompt (persona + happiness framing + few-shot) + User prompt (state + rules) + Context (memory) → JSON response
+4. **Action Validation** — Verify `action_id` against environment action mask; retry with error hint (max 3), then fallback to random valid action
 
 ### Agent Personas (Age-Based Heterogeneity)
 
-| Agent | Persona | Skill Level | Labor Cost | Strategy Tendency |
-|-------|---------|-------------|------------|-------------------|
-| 0 | Youth (≤20) | Low (alpha=6.0) | Low (0.7x) | Exploration, learning |
-| 1 | Young Adult (21-40) | Moderate (alpha=4.0) | Normal (1.0x) | Balanced, versatile |
-| 2 | Middle-aged (41-60) | High (alpha=2.5) | High (1.3x) | Efficiency, trading |
-| 3 | Senior (>60) | Highest (alpha=1.5) | Highest (1.8x) | Stationary, market-focused |
+| Agent | Persona | Skill Level | Labor Cost | Coin Endowment | Strategy Tendency |
+|-------|---------|-------------|------------|----------------|-------------------|
+| 0 | Youth (≤20) | Low (alpha=6.0) | Low (0.7x) | 0 | Exploration, learning |
+| 1 | Young Adult (21-40) | Moderate (alpha=4.0) | Normal (1.0x) | 0 | Balanced, versatile |
+| 2 | Middle-aged (41-60) | High (alpha=2.5) | High (1.3x) | 30-50 | Efficiency, trading |
+| 3 | Senior (>60) | Highest (alpha=1.5) | Highest (1.8x) | 50-70 | Stationary, market-focused |
+
+- **Labor cost modifier**: Applied via delta-based scaling after each `env.step()`. Only the new labor incurred per step is multiplied by the modifier, preventing compounding errors on historical accumulation.
+- **Coin endowment**: Middle-aged and Senior agents start with initial Coin (drawn uniformly from their range) representing lifecycle savings. This is injected at environment reset and the optimization baseline is recalculated accordingly.
+
+### Utility / Happiness Design
+
+Agent utility follows the AI Economist's original formulation: **diminishing marginal utility of Coin minus labor cost**. However, the LLM prompt frames this as:
+
+> *"Your happiness = Coin earned minus effort spent."*
+
+Key prompt design decisions:
+- **Labor as investment**: "Spending labor to gather and build is an investment — it pays off in Coin." This prevents small models from interpreting labor avoidance as optimal (which caused NOOP-heavy behavior in early experiments).
+- **Stamina description**: Each agent's `labor_cost_modifier` is translated to natural language (e.g., "You have good stamina" for 0.7x, "Physical tasks cost you more effort than most" for 1.8x) rather than exposing the raw numeric modifier.
+- **No explicit recommendation**: The prompt describes the environment fully but never tells agents what action to take.
+
+### Action Space
+
+50 discrete actions, ordered alphabetically by Foundation convention (**Stone before Wood**):
+
+| Range | Action |
+|-------|--------|
+| 0 | NOOP |
+| 1 | Build (requires 1 Wood + 1 Stone) |
+| 2-12 | Buy Stone (bid price 0-10) |
+| 13-23 | Sell Stone (ask price 0-10) |
+| 24-34 | Buy Wood (bid price 0-10) |
+| 35-45 | Sell Wood (ask price 0-10) |
+| 46-49 | Move Left / Right / Up / Down |
+
+An `_validate_action_order()` check runs at startup to confirm Foundation's internal ordering matches `action_map.py`.
 
 ### Social Planner
 
-- Observes all agents' wealth and inequality (Gini coefficient) every step
+- Observes all agents' wealth, inventory, and inequality (Gini coefficient) every step
 - Sets progressive tax brackets every 100 steps
-- Objective: maximize social welfare (equality × productivity)
+- Guided by two objectives: **fairness** (Gini, wealth gaps, resource access) and **productivity** (total Coin, building/market activity)
 
 ## Project Structure
 
@@ -135,6 +165,8 @@ Each run generates a timestamped directory under `simulation_results/`:
 - **Non-blocking memory**: Long-term consolidation runs as async background task
 - **Information-rich, non-prescriptive**: Translator provides full environmental context without recommending actions
 - **Comprehensive logging**: Every LLM prompt and response recorded for research reproducibility
+- **Small-model optimized prompts**: Prompt design tested with 3B-8B parameter models (qwen2.5:3b, llama3:8b). Few-shot examples prioritize gather actions (primacy effect), trading rules are compressed, and directions use action-aligned language (Up/Down/Left/Right with action IDs instead of cardinal N/S/E/W)
+- **Delta-based labor scaling**: Per-agent labor cost modifiers apply only to each step's new labor increment, avoiding compounding errors
 
 ## References
 

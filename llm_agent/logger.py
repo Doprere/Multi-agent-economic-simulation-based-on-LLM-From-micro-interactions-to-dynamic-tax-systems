@@ -283,6 +283,12 @@ class SimulationLogger:
         ax0 = axes[0]
         ax0.set_facecolor(BG)
         ax0.imshow(composite, interpolation="nearest", aspect="equal")
+        # Map boundary indicator
+        map_H, map_W = composite.shape[0], composite.shape[1]
+        border = plt.Rectangle((-0.5, -0.5), map_W, map_H,
+                                linewidth=2, edgecolor='#FF4444',
+                                facecolor='none', linestyle='--', zorder=4)
+        ax0.add_patch(border)
         for agent in agents:
             r, c = agent.loc
             color = AGENT_COLORS[agent.idx % len(AGENT_COLORS)]
@@ -298,6 +304,8 @@ class SimulationLogger:
             mpatches.Patch(color="#8844BB", label="Stone"),
             mpatches.Patch(color="#FF4444", label="House"),
             mpatches.Patch(color="#2255FF", label="Water"),
+            mpatches.Patch(facecolor="#4D2626", edgecolor="#FF4444",
+                           label="Out of Bounds", linestyle="--"),
         ]
         for a in agents:
             patches.append(mpatches.Patch(
@@ -323,7 +331,22 @@ class SimulationLogger:
             if vismap is not None:
                 ego = _make_composite(np.array(vismap))
                 ax.imshow(ego, interpolation="nearest", aspect="equal")
-                ch_c, cw_c = ego.shape[0] // 2, ego.shape[1] // 2
+                ego_h, ego_w = ego.shape[0], ego.shape[1]
+                half_h, half_w = ego_h // 2, ego_w // 2
+                ch_c, cw_c = half_h, half_w
+                # OOB overlay: mark tiles outside map boundary
+                agent_r, agent_c = agent.loc
+                oob = np.zeros((ego_h, ego_w), dtype=bool)
+                for er in range(ego_h):
+                    for ec in range(ego_w):
+                        wr = agent_r + (er - half_h)
+                        wc = agent_c + (ec - half_w)
+                        if wr < 0 or wr >= map_H or wc < 0 or wc >= map_W:
+                            oob[er, ec] = True
+                if oob.any():
+                    overlay = np.zeros((ego_h, ego_w, 4))
+                    overlay[oob] = [0.3, 0.15, 0.15, 0.6]  # dark red semi-transparent
+                    ax.imshow(overlay, interpolation="nearest", aspect="equal", zorder=3)
                 ax.scatter(cw_c, ch_c, s=200,
                            color=AGENT_COLORS[agent.idx % len(AGENT_COLORS)],
                            edgecolors="white", linewidths=1.5, zorder=5, marker="*")

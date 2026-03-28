@@ -71,6 +71,7 @@ def _apply_age_group_skills(env, cfg: AppConfig) -> None:
         agent.state["build_skill"] = float(sampled_skill)
         build_comp.sampled_skills[agent.idx] = sampled_skill
         agent.state["labor_cost_modifier"] = persona.labor_cost_modifier
+        agent.state["_prev_labor"] = 0.0
 
         # --- Initial coin endowment (lifecycle savings) ---
         lo = persona.endowment_coin_min
@@ -99,6 +100,46 @@ def _apply_age_group_skills(env, cfg: AppConfig) -> None:
     env.init_optimization_metric = deepcopy(curr)
     env.prev_optimization_metric = deepcopy(curr)
     logger.info("[Init] Optimization metric baseline recalculated after endowment injection")
+
+
+def _validate_action_order(env) -> None:
+    """Verify Foundation's action_names order matches action_map.py assumptions."""
+    agent = env.get_agent("0")
+    names = agent._action_names
+    expected = [
+        "Build",
+        "ContinuousDoubleAuction.Buy_Stone",
+        "ContinuousDoubleAuction.Sell_Stone",
+        "ContinuousDoubleAuction.Buy_Wood",
+        "ContinuousDoubleAuction.Sell_Wood",
+        "Gather",
+    ]
+    assert names == expected, (
+        f"Action name order mismatch! Expected {expected}, got {names}. "
+        f"action_map.py may need updating."
+    )
+    logger.info("[Init] Action order validation passed")
+
+
+def _apply_labor_modifier(env) -> None:
+    """
+    每步結束後，根據 labor_cost_modifier 調整各 Agent 的累積勞動。
+    delta-based scaling：只對本步新增的 Labor 乘以 modifier。
+    """
+    for agent in env.world.agents:
+        modifier = agent.state.get("labor_cost_modifier", 1.0)
+        if modifier == 1.0:
+            continue
+
+        current_labor = agent.state["endogenous"]["Labor"]
+        prev_labor = agent.state.get("_prev_labor", 0.0)
+        delta = current_labor - prev_labor
+
+        if delta > 0:
+            adjusted_delta = delta * modifier
+            agent.state["endogenous"]["Labor"] = prev_labor + adjusted_delta
+
+        agent.state["_prev_labor"] = agent.state["endogenous"]["Labor"]
 
 
 # ──────────────────────────────────────────────────────────────
@@ -237,6 +278,7 @@ async def run_episode(
     env = foundation.make_env_instance(**env_config)
     obs = env.reset()
     _apply_age_group_skills(env, cfg)
+    _validate_action_order(env)
 
     print(f"\n[Init] 環境初始化完成，Planner action_spaces={env.world.planner.action_spaces}")
 
@@ -295,6 +337,9 @@ async def run_episode(
                 agent_actions = await decide_batch(agents, obs, env, step)
 
             # 資源鄰近偵測（使用 agent 決策時看到的 obs）
+            # 所有地圖快照統一在 env.step() 之前拍攝，確保與 prompt obs 一致
+            should_snapshot = (step + 1) % 20 == 0 or step == 0
+
             if not dry_run:
                 # 從最近的 thought_logs 中取出本步各 agent 的 thought
                 recent_thoughts: dict[str, str] = {}
@@ -310,7 +355,10 @@ async def run_episode(
                     step=step,
                 )
                 if has_adjacent:
-                    sim_logger.save_map_snapshot(step=step, env=env)
+                    should_snapshot = True
+
+            if should_snapshot:
+                sim_logger.save_map_snapshot(step=step, env=env)
 
             # 建構 actions dict
             planner_env_action = _build_planner_action(env, planner_brackets)
@@ -321,6 +369,7 @@ async def run_episode(
 
             # 環境推進
             obs, rewards, done, info = env.step(actions)
+            _apply_labor_modifier(env)
 
             # 記錄
             sim_logger.log_step(
@@ -332,10 +381,6 @@ async def run_episode(
             )
             if planner_brackets is not None:
                 sim_logger.log_tax(step, planner_brackets)
-
-            # 每 20 步輸出地圖快照
-            if (step + 1) % 20 == 0 or step == 0:
-                sim_logger.save_map_snapshot(step=step, env=env)
 
             if done.get("__all__", False):
                 print(f"\n[Done] Episode 在步驟 {step} 結束（all done）")

@@ -2,12 +2,13 @@
 action_map.py — Action ID <-> semantic name mapping.
 
 Single action mode layout (Build=1, CDA max_bid_ask=10, Gather=4):
+Foundation sorts resources alphabetically → Stone before Wood.
   0       = NOOP
   1       = Build
-  2-12    = Buy Wood  (bid price 0..10)
-  13-23   = Sell Wood (ask price 0..10)
-  24-34   = Buy Stone (bid price 0..10)
-  35-45   = Sell Stone (ask price 0..10)
+  2-12    = Buy Stone  (bid price 0..10)
+  13-23   = Sell Stone (ask price 0..10)
+  24-34   = Buy Wood   (bid price 0..10)
+  35-45   = Sell Wood  (ask price 0..10)
   46      = Move Left
   47      = Move Right
   48      = Move Up
@@ -23,7 +24,7 @@ MAX_BID_ASK = 10
 # ── Build action name table ────────────────────────────────────
 _CDA_ACTIONS: dict[int, str] = {}
 _base = 2  # 0=NOOP, 1=Build
-for _resource in ["Wood", "Stone"]:
+for _resource in ["Stone", "Wood"]:
     for _price in range(MAX_BID_ASK + 1):
         _CDA_ACTIONS[_base] = f"Buy {_resource} (bid {_price} Coin)"
         _base += 1
@@ -46,10 +47,10 @@ TOTAL_ACTIONS = 50
 # Semantic groups
 GROUP_NOOP       = {0}
 GROUP_BUILD      = {1}
-GROUP_BUY_WOOD   = set(range(2,  13))
-GROUP_SELL_WOOD  = set(range(13, 24))
-GROUP_BUY_STONE  = set(range(24, 35))
-GROUP_SELL_STONE = set(range(35, 46))
+GROUP_BUY_STONE  = set(range(2,  13))
+GROUP_SELL_STONE = set(range(13, 24))
+GROUP_BUY_WOOD   = set(range(24, 35))
+GROUP_SELL_WOOD  = set(range(35, 46))
 GROUP_MOVE       = {46, 47, 48, 49}
 
 # CDA decode: action_id -> {resource, side, price}
@@ -60,7 +61,7 @@ for _aid in range(2, 46):
     _side  = "buy" if _rem < 11 else "sell"
     _price = _rem if _rem < 11 else _rem - 11
     CDA_DECODE[_aid] = {
-        "resource": ["Wood", "Stone"][_res_idx],
+        "resource": ["Stone", "Wood"][_res_idx],
         "side":     _side,
         "price":    _price,
     }

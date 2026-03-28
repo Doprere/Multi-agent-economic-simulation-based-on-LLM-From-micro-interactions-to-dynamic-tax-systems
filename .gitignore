@@ -16,6 +16,7 @@ credentials.json
 simulation_results/
 
 # ── Research documents (not for public) ──
+thesis/
 *.pdf
 *.docx
 *.doc

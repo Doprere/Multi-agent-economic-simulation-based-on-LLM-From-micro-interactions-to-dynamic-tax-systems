@@ -75,6 +75,7 @@ def _apply_age_group_skills(env, cfg: AppConfig) -> None:
         # 對數值影響：將 labor_cost_modifier 存入 agent state，
         # 在 simulation loop 中每步結束後補償勞動消耗。
         agent.state["labor_cost_modifier"] = persona.labor_cost_modifier
+        agent.state["_prev_labor"] = 0.0
 
         # --- Initial coin endowment (lifecycle savings) ---
         lo = persona.endowment_coin_min
@@ -105,18 +106,47 @@ def _apply_age_group_skills(env, cfg: AppConfig) -> None:
     logger.info("[Init] Optimization metric baseline recalculated after endowment injection")
 
 
+def _validate_action_order(env) -> None:
+    """Verify Foundation's action_names order matches action_map.py assumptions."""
+    agent = env.get_agent("0")
+    names = agent._action_names
+    expected = [
+        "Build",
+        "ContinuousDoubleAuction.Buy_Stone",
+        "ContinuousDoubleAuction.Sell_Stone",
+        "ContinuousDoubleAuction.Buy_Wood",
+        "ContinuousDoubleAuction.Sell_Wood",
+        "Gather",
+    ]
+    assert names == expected, (
+        f"Action name order mismatch! Expected {expected}, got {names}. "
+        f"action_map.py may need updating."
+    )
+    logger.info("[Init] Action order validation passed")
+
+
 def _apply_labor_modifier(env) -> None:
     """
     每步結束後，根據 labor_cost_modifier 調整各 Agent 的累積勞動。
     modifier > 1 → 消耗更多體力（老年）；modifier < 1 → 消耗更少體力（青年）。
 
-    注意：Foundation 的 Labor 是累積值，原始公式本步觸發的勞動已「過量」記錄。
-    我們在此通過補差值的方式實現 per-agent 係數。
+    採用 delta-based scaling：只對本步新增的 Labor 乘以 modifier，
+    避免對歷史累積值重複縮放。
     """
-    # 此功能暫以 prompt 語義層面說明為主，
-    # 數值注入可能影響環境 reward 計算的一致性，
-    # 若需嚴格數值精度，建議直接 fork Foundation 的 Gather/Build 元件。
-    pass
+    for agent in env.world.agents:
+        modifier = agent.state.get("labor_cost_modifier", 1.0)
+        if modifier == 1.0:
+            continue
+
+        current_labor = agent.state["endogenous"]["Labor"]
+        prev_labor = agent.state.get("_prev_labor", 0.0)
+        delta = current_labor - prev_labor
+
+        if delta > 0:
+            adjusted_delta = delta * modifier
+            agent.state["endogenous"]["Labor"] = prev_labor + adjusted_delta
+
+        agent.state["_prev_labor"] = agent.state["endogenous"]["Labor"]
 
 
 # ──────────────────────────────────────────────────────────────
@@ -198,6 +228,7 @@ async def run_episode(
 
     # 注入年齡族群技能
     _apply_age_group_skills(env, cfg)
+    _validate_action_order(env)
 
     print(f"\n[Init] 環境初始化完成，Planner action_spaces={env.world.planner.action_spaces}")
 
@@ -249,6 +280,7 @@ async def run_episode(
 
         # ─ 環境推進 ─
         obs, rewards, done, info = env.step(actions)
+        _apply_labor_modifier(env)
 
         # ─ 記錄 ─
         sim_logger.log_step(
