@@ -441,16 +441,7 @@ class SimulationLogger:
 #  工具函數
 # ──────────────────────────────────────────────────────────────
 
-def _gini(values: np.ndarray) -> float:
-    values = np.sort(np.abs(values))
-    n = len(values)
-    if n == 0 or np.sum(values) == 0:
-        return 0.0
-    idx = np.arange(1, n + 1)
-    return float(
-        (2 * np.dot(idx, values) - (n + 1) * np.sum(values))
-        / (n * np.sum(values))
-    )
+from .translator import _gini
 
 
 def _write_csv(path: Path, records: list[dict]) -> None:

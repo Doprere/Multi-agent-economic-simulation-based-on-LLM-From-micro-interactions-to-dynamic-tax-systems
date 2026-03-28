@@ -37,6 +37,7 @@ from llm_agent.config import AppConfig, load_config, make_env_config
 from llm_agent.logger import SimulationLogger, setup_logging
 from llm_agent.llm_client import LLMClient
 from llm_agent.planner import PlannerLLM
+from llm_agent.translator import _extract_resource_positions, _direction_desc
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,6 @@ def _apply_age_group_skills(env, cfg: AppConfig) -> None:
     此函數在 env.reset() 之後呼叫，覆蓋預設的技能抽樣結果。
     """
     build_comp = env.get_component("Build")
-    gather_comp = env.get_component("Gather")
 
     for persona in cfg.personas:
         agent = env.get_agent(str(persona.id))
@@ -196,6 +196,66 @@ def _sample_random_actions(env, obs) -> tuple[dict[str, int], list[int]]:
 
 
 # ──────────────────────────────────────────────────────────────
+#  資源鄰近偵測（驗證用）
+# ──────────────────────────────────────────────────────────────
+
+def _check_resource_adjacency(
+    env,
+    obs: dict,
+    cfg: AppConfig,
+    sim_logger: SimulationLogger,
+    agent_actions: dict[str, int],
+    agent_thoughts: dict[str, str],
+    step: int,
+) -> bool:
+    """
+    檢查是否有任何 agent 在資源旁（Manhattan dist=1）。
+    若有，記錄 adjacency event 並回傳 True（觸發地圖截圖）。
+    """
+    found_any = False
+
+    channel_names: list[str] | None = None
+    try:
+        channel_names = list(env.world.maps._maps.keys())
+    except AttributeError:
+        pass
+
+    for persona in cfg.personas:
+        agent_key = str(persona.id)
+        agent_obs = obs.get(agent_key, {})
+        _vm = agent_obs.get("world-map")
+        visible_map = _vm if _vm is not None else agent_obs.get("map")
+        if visible_map is None:
+            continue
+
+        resource_pos = _extract_resource_positions(
+            np.array(visible_map), channel_names=channel_names
+        )
+
+        for res_type, positions in resource_pos.items():
+            for r, c in positions:
+                dist = abs(r) + abs(c)
+                if dist == 1:
+                    direction = _direction_desc(r, c)
+                    sim_logger.log_adjacency_event(
+                        step=step,
+                        agent_id=agent_key,
+                        agent_name=persona.display_name,
+                        resource_type=res_type,
+                        direction=direction,
+                        agent_action=agent_actions.get(agent_key),
+                        agent_thought=agent_thoughts.get(agent_key, ""),
+                    )
+                    found_any = True
+                    logger.info(
+                        f"[Adjacency] Step {step}: Agent {agent_key}（{persona.display_name}）"
+                        f"旁有 {res_type}（{direction}），實際動作={agent_actions.get(agent_key)}"
+                    )
+
+    return found_any
+
+
+# ──────────────────────────────────────────────────────────────
 #  主模擬迴圈
 # ──────────────────────────────────────────────────────────────
 
@@ -238,7 +298,10 @@ async def run_episode(
     if not dry_run:
         llm_client = LLMClient(cfg.llm)
         agents = [
-            MobileAgentLLM(persona, llm_client, cfg.memory)
+            MobileAgentLLM(
+                persona, llm_client, cfg.memory,
+                sim_logger=sim_logger,
+            )
             for persona in cfg.personas
         ]
         planner = PlannerLLM(
@@ -246,6 +309,7 @@ async def run_episode(
             llm_client=llm_client,
             mem_cfg=cfg.memory,
             tax_period=cfg.planner.tax_period,
+            sim_logger=sim_logger,
         )
         print(f"[Init] {len(agents)} 個 LLM Agent + 1 個 LLM Planner 已建立")
     else:
@@ -257,59 +321,82 @@ async def run_episode(
     episode_length = min(max_steps or cfg.environment.episode_length, cfg.environment.episode_length)
     print(f"[Start] 開始模擬，共 {episode_length} 步\n")
 
-    planner_action_cache: list[int] | None = None  # 上一次稅收日的稅率（供非稅收日使用）
+    step = 0
+    try:
+        for step in range(episode_length):
 
-    for step in range(episode_length):
+            if dry_run:
+                # 隨機動作
+                agent_actions, planner_brackets = _sample_random_actions(env, obs)
+            else:
+                # ─ Planner 決策（每步） ─
+                planner_brackets = await planner.step(obs=obs, env=env, step=step)
 
-        if dry_run:
-            # 隨機動作
-            agent_actions, planner_brackets = _sample_random_actions(env, obs)
-        else:
-            # ─ Planner 決策（每步） ─
-            planner_brackets = await planner.step(obs=obs, env=env, step=step)
+                # ─ Agent 並行決策 ─
+                agent_actions = await decide_batch(agents, obs, env, step)
 
-            # ─ Agent 並行決策 ─
-            agent_actions = await decide_batch(agents, obs, env, step)
+            # ─ 資源鄰近偵測 + 地圖快照 ─
+            should_snapshot = (step + 1) % 20 == 0 or step == 0
 
-        # ─ 建構完整 actions dict ─
-        planner_env_action = _build_planner_action(env, planner_brackets)
-        actions: dict = {
-            **agent_actions,
-            env.world.planner.idx: planner_env_action,
-        }
+            if not dry_run:
+                recent_thoughts: dict[str, str] = {}
+                for rec in reversed(sim_logger._thought_logs):
+                    if rec["step"] == step and rec["agent_id"] != "planner":
+                        recent_thoughts[rec["agent_id"]] = rec["thought"]
+                    if len(recent_thoughts) >= len(cfg.personas):
+                        break
 
-        # ─ 環境推進 ─
-        obs, rewards, done, info = env.step(actions)
-        _apply_labor_modifier(env)
+                has_adjacent = _check_resource_adjacency(
+                    env=env, obs=obs, cfg=cfg, sim_logger=sim_logger,
+                    agent_actions=agent_actions, agent_thoughts=recent_thoughts,
+                    step=step,
+                )
+                if has_adjacent:
+                    should_snapshot = True
 
-        # ─ 記錄 ─
-        sim_logger.log_step(
-            step=step,
-            rewards=rewards,
-            env=env,
-            agent_actions=agent_actions,
-            planner_action=planner_brackets,
-        )
-        if planner_brackets is not None:
-            sim_logger.log_tax(step, planner_brackets)
+            if should_snapshot:
+                sim_logger.save_map_snapshot(step=step, env=env)
 
-        if done.get("__all__", False):
-            print(f"\n[Done] Episode 在步驟 {step} 結束（all done）")
-            break
+            # ─ 建構完整 actions dict ─
+            planner_env_action = _build_planner_action(env, planner_brackets)
+            actions: dict = {
+                **agent_actions,
+                env.world.planner.idx: planner_env_action,
+            }
 
-    # ── 結束 ────────────────────────────────────────────────
-    print(f"\n[End] 模擬完成！共執行 {step+1} 步")
-    sim_logger.save()
+            # ─ 環境推進 ─
+            obs, rewards, done, info = env.step(actions)
+            _apply_labor_modifier(env)
 
-    # 等待所有背景記憶彙整任務完成
-    if not dry_run:
-        pending = [
-            a._consolidation_task for a in agents
-            if a._consolidation_task and not a._consolidation_task.done()
-        ]
-        if pending:
-            print(f"[Cleanup] 等待 {len(pending)} 個記憶彙整任務完成...")
-            await asyncio.gather(*pending, return_exceptions=True)
+            # ─ 記錄 ─
+            sim_logger.log_step(
+                step=step,
+                rewards=rewards,
+                env=env,
+                agent_actions=agent_actions,
+                planner_action=planner_brackets,
+            )
+            if planner_brackets is not None:
+                sim_logger.log_tax(step, planner_brackets)
+
+            if done.get("__all__", False):
+                print(f"\n[Done] Episode 在步驟 {step} 結束（all done）")
+                break
+
+    finally:
+        # ── 結束：確保資源釋放 ──────────────────────────────
+        print(f"\n[End] 模擬完成！共執行 {step+1} 步")
+        sim_logger.save()
+
+        # 等待所有背景記憶彙整任務完成
+        if not dry_run:
+            pending = [
+                a._consolidation_task for a in agents
+                if a._consolidation_task and not a._consolidation_task.done()
+            ]
+            if pending:
+                print(f"[Cleanup] 等待 {len(pending)} 個記憶彙整任務完成...")
+                await asyncio.gather(*pending, return_exceptions=True)
 
 
 # ──────────────────────────────────────────────────────────────

@@ -225,7 +225,7 @@ class ObsTranslator:
             "",
             "[Wellbeing Sense]",
             f"  Current wealth: {inv.get('Coin', 0):.1f} Coin",
-            f"  Accumulated fatigue: {labor:.2f}"
+            f"  Accumulated fatigue: {labor:.2f}",
             f"  (effective value accounting for your stamina modifier={agent.state.get('labor_cost_modifier', 1.0)})",
             "",
             "[Visible Resources]",
