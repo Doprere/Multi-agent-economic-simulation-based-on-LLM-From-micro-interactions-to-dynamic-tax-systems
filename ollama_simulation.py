@@ -254,6 +254,7 @@ async def run_episode(
     max_steps: int | None = None,
     dry_run: bool = False,
     run_name: str | None = None,
+    output_dir: str = "simulation_results",
 ) -> None:
     """
     執行一個完整 Episode（Ollama LLM 版）。
@@ -283,7 +284,7 @@ async def run_episode(
     print(f"\n[Init] 環境初始化完成，Planner action_spaces={env.world.planner.action_spaces}")
 
     # ── 初始化 LLM 元件 ────────────────────────────────────
-    sim_logger = SimulationLogger(run_name=run_name)
+    sim_logger = SimulationLogger(output_dir=output_dir, run_name=run_name)
 
     ollama_client: OllamaClient | None = None
 
@@ -382,6 +383,11 @@ async def run_episode(
             if planner_brackets is not None:
                 sim_logger.log_tax(step, planner_brackets)
 
+            # 定期存檔（每 100 步）
+            if (step + 1) % 100 == 0:
+                sim_logger.save()
+                print(f"[Checkpoint] Step {step+1} intermediate results saved")
+
             if done.get("__all__", False):
                 print(f"\n[Done] Episode 在步驟 {step} 結束（all done）")
                 break
@@ -429,6 +435,10 @@ def main() -> None:
         help="輸出資料夾名稱（預設自動加時間戳）",
     )
     parser.add_argument(
+        "--output-dir", type=str, default="simulation_results",
+        help="輸出根目錄（預設 simulation_results）",
+    )
+    parser.add_argument(
         "--config", type=str, default=None,
         help="config.yaml 路徑（預設 llm_agent/config.yaml）",
     )
@@ -458,6 +468,7 @@ def main() -> None:
             max_steps=args.steps,
             dry_run=args.dry_run,
             run_name=args.run_name,
+            output_dir=args.output_dir,
         )
     )
 

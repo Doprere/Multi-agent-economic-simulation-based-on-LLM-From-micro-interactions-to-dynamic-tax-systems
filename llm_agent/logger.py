@@ -49,6 +49,9 @@ class SimulationLogger:
         self._prompt_logs: list[dict] = []  # 完整 LLM prompt 記錄
         self._adjacency_events: list[dict] = []  # agent 在資源旁事件
 
+        # 觀察者用累計指標（不回傳給環境或 agents）
+        self._cumulative_planner_reward: float = 0.0
+
     # ── 每步記錄 ──────────────────────────────────────────────
 
     def log_step(
@@ -77,12 +80,21 @@ class SimulationLogger:
         # Social Welfare（Planner reward）
         planner_reward = float(rewards.get(env.world.planner.idx, 0.0))
 
+        # ── 觀察者用 SWF 指標（不回傳給環境或 agents） ──
+        self._cumulative_planner_reward += planner_reward
+        n_agents = len(agents)
+        equality = 1.0 - gini                             # 1 - Gini
+        productivity = total_coin / n_agents if n_agents else 0.0
+        swf_absolute = equality * productivity             # eq × prod
+
         step_record: dict[str, Any] = {
             "step": step,
             "total_coin": total_coin,
             "mean_coin": round(mean_coin, 3),
             "gini": round(gini, 5),
             "planner_reward": round(planner_reward, 5),
+            "cumulative_planner_reward": round(self._cumulative_planner_reward, 5),
+            "swf_absolute": round(swf_absolute, 5),
             **{f"reward_agent_{i}": round(v, 5) for i, v in agent_rewards.items()},
             **{
                 f"coin_agent_{str(a.idx)}": round(float(a.inventory.get("Coin", 0)), 3)
@@ -100,6 +112,15 @@ class SimulationLogger:
                 f"labor_agent_{str(a.idx)}": round(float(a.endogenous.get("Labor", 0)), 3)
                 for a in agents
             },
+            # Build 計數（action_id == 1）
+            **{
+                f"build_agent_{str(a.idx)}": int(agent_actions.get(str(a.idx), -1) == 1)
+                for a in agents
+            },
+            "build_total": sum(
+                int(agent_actions.get(str(a.idx), -1) == 1)
+                for a in agents
+            ),
         }
         self._step_logs.append(step_record)
 
@@ -428,11 +449,17 @@ class SimulationLogger:
         rewards_str = ", ".join(
             f"A{k}={v:.3f}" for k, v in sorted(agent_rewards.items())
         )
+        equality = 1.0 - gini
+        swf_abs = equality * mean_coin  # eq × (total_coin / n), mean_coin already = total/n
+        total_builds = sum(r.get("build_total", 0) for r in self._step_logs)
         print(
             f"[Step {step:>4}] "
             f"均 Coin={mean_coin:.1f} | "
             f"Gini={gini:.4f} | "
+            f"Build={total_builds} | "
             f"Planner Reward={planner_reward:.4f} | "
+            f"Σ Planner={self._cumulative_planner_reward:.4f} | "
+            f"SWF={swf_abs:.2f} | "
             f"Agent Rewards: {rewards_str}"
         )
 

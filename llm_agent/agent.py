@@ -292,16 +292,36 @@ async def decide_batch(
     """
     async def _decide_one(agent: MobileAgentLLM) -> tuple[str, int]:
         agent_key = str(agent.persona.id)
-        agent_obs = obs.get(agent_key, {})
-        raw_mask = agent_obs.get("action_mask", np.zeros(50))
-        mask = np.array(raw_mask, dtype=np.float32)
-        action_id = await agent.decide(
-            obs=agent_obs,
-            mask=mask,
-            env=env,
-            step=step,
-        )
-        return agent_key, action_id
+        try:
+            agent_obs = obs.get(agent_key, {})
+            raw_mask = agent_obs.get("action_mask", np.zeros(50))
+            mask = np.array(raw_mask, dtype=np.float32)
+            action_id = await agent.decide(
+                obs=agent_obs,
+                mask=mask,
+                env=env,
+                step=step,
+            )
+            return agent_key, action_id
+        except Exception as e:
+            logger.error(
+                f"[Agent {agent_key}] decide crashed at step {step}, "
+                f"fallback random: {e}"
+            )
+            raw_mask = obs.get(agent_key, {}).get("action_mask", np.zeros(50))
+            mask = np.array(raw_mask, dtype=np.float32)
+            fallback_id = get_random_valid_action(mask)
+            if agent.sim_logger is not None:
+                agent.sim_logger.log_thought(
+                    step=step,
+                    agent_id=agent_key,
+                    agent_name=agent.persona.display_name,
+                    role=agent.persona.role,
+                    thought=f"[FALLBACK] decide() crashed: {e}",
+                    action_id=fallback_id,
+                    short_term_memory="",
+                )
+            return agent_key, fallback_id
 
     results = await asyncio.gather(*[_decide_one(a) for a in agents])
     return dict(results)

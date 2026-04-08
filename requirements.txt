@@ -1,5 +1,26 @@
-# 核心依賴
+# ── LLM 模擬核心 ──
 numpy>=1.21.0
 PyYAML>=6.0
 openai>=1.0.0
 httpx>=0.25.0
+
+# ── 基礎建構 ──
+setuptools
+
+# ── AI Economist 框架依賴 ──
+lz4
+GPUtil
+pycryptodome
+gym
+
+# ── 資料處理與輸出 ──
+openpyxl
+matplotlib
+Pillow
+
+# ── 診斷 / 資料分析（covid19 datasets 等） ──
+pandas
+scipy
+tqdm
+beautifulsoup4
+requests
