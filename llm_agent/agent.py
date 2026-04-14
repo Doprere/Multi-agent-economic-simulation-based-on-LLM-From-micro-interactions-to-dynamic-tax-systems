@@ -34,23 +34,26 @@ if TYPE_CHECKING:
 FEW_SHOT_EXAMPLES = """
 Here are a few response examples (action_id MUST be from the valid action list):
 
-Example 1 (gather — move toward resource):
-{{"thought": "Wood is 2 tiles to the Right, my Wood=0. I need it to build. Moving right to collect.", "action_id": 47}}
+Example 1 (build — materials ready):
+{{"thought": "I have Wood=1 and Stone=1 — the exact materials needed to build. Build payout scales with my skill; converting these materials into Coin this step.", "action_id": 1}}
 
-Example 2 (gather — move toward distant resource):
-{{"thought": "Stone is 3 steps away (2 Down, 1 Right). No resources nearby. Moving Down first to get closer.", "action_id": 49}}
+Example 2 (gather — adjacent resource):
+{{"thought": "A Wood tile is immediately Right (dist=1) and my Wood=0. Moving Right to collect it.", "action_id": 47}}
 
-Example 3 (build):
-{{"thought": "I have Wood=1, Stone=1. Building now earns 15 Coin — worth the labor.", "action_id": 1}}
+Example 3 (gather — distant resource):
+{{"thought": "Nearest Stone is 3 steps away (2 Down, 1 Right). No resources adjacent this step. Moving Down first to approach.", "action_id": 49}}
 
-Example 4 (buy on market):
-{{"thought": "I need Stone to build. Lowest ask for Stone is 4 Coin. I'll bid 4 to match and buy immediately.", "action_id": 6}}
+Example 4 (move — blocked direction, reroute):
+{{"thought": "Wood is 2 tiles to the Right, but Move Right is in the blocked list — the tile to the right is not a valid movable area this step. Moving Down to reroute around.", "action_id": 49}}
 
-Example 5 (sell on market):
-{{"thought": "I have Stone=3 which exceeds my build needs. Highest bid for Stone is 5 Coin. I'll ask 5 to sell immediately.", "action_id": 18}}
+Example 5 (buy — acquire missing build material):
+{{"thought": "I have Stone=1 but Wood=0, and no Wood tiles are visible nearby. The Wood market shows a lowest ask of 3 Coin. Placing a bid of 3 on Wood.", "action_id": 27}}
 
-Example 6 (NOOP — only when truly idle):
-{{"thought": "No resources visible, cannot build, all orders pending. Nothing productive to do this step.", "action_id": 0}}
+Example 6 (sell — surplus for Coin):
+{{"thought": "My Stone=3 is more than I need for building. The Stone market shows a highest bid of 5 Coin — selling my surplus unit there would earn me 5 Coin. Placing an ask of 5 on Stone.", "action_id": 18}}
+
+Example 7 (build — after gathering):
+{{"thought": "I just collected the last Stone I needed. Wood=2, Stone=1, and I am standing on a buildable tile. Building this step to turn the gathered materials into Coin.", "action_id": 1}}
 """
 
 
@@ -103,9 +106,9 @@ class MobileAgentLLM:
             f"You are an Agent in the AI Economist simulation, representing '{p.display_name}'.\n"
             f"Your role: {p.role.strip()}\n\n"
             "Your happiness = Coin earned minus effort spent.\n"
-            "- Gather Wood and Stone, then Build houses or Sell on market to earn Coin.\n"
+            "- Coin outcomes depend on the environment, including building activity and market trades.\n"
             "- Every action (moving, gathering, building, trading) costs some labor.\n"
-            "- Spending labor to gather and build is an investment — it pays off in Coin.\n"
+            "- Labor has a cost and should be weighed against possible Coin outcomes.\n"
             f"{stamina}\n\n"
             "Decision rules:\n"
             "1. Choose exactly ONE action_id per step. It MUST appear in the [Valid Actions] list.\n"
@@ -215,7 +218,7 @@ class MobileAgentLLM:
                     user_prompt=prompt,
                     context=short_ctx,
                 )
-                thought = str(result.get("thought", ""))
+                thought = result.get("thought") or ""
                 action_id = int(result.get("action_id", -1))
 
                 if is_valid_action(action_id, mask):

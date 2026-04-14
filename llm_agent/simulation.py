@@ -6,6 +6,9 @@ Usage:
     python -m llm_agent.simulation                      # full 1000-step episode
     python -m llm_agent.simulation --steps 10           # quick test
     python -m llm_agent.simulation --dry-run --steps 5  # random actions, no LLM
+    使用方式:
+    $env:OPENAI_API_KEY = "sk-proj-你的key"
+    python -m llm_agent.simulation --steps 300 --run-name gpt4o_mini_run1
 """
 from __future__ import annotations
 
@@ -387,6 +390,28 @@ async def run_episode(
         # ── 結束：確保資源釋放 ──────────────────────────────
         print(f"\n[End] 模擬完成！共執行 {step+1} 步")
         sim_logger.save()
+
+        # ── Token 用量摘要 ──────────────────────────────────
+        if not dry_run:
+            usage = llm_client.get_token_usage()
+            print("\n" + "─"*45)
+            print(" Token 用量摘要")
+            print("─"*45)
+            print(f"  API 呼叫次數 : {usage['api_calls']:>10,}")
+            print(f"  Prompt tokens: {usage['prompt_tokens']:>10,}")
+            print(f"  Output tokens: {usage['completion_tokens']:>10,}")
+            print(f"  Total tokens : {usage['total_tokens']:>10,}")
+            print("─"*45)
+
+            # 附加至 summary.json
+            import json as _json
+            summary_path = sim_logger.output_dir / sim_logger.run_name / "summary.json"
+            if summary_path.exists():
+                with open(summary_path, encoding="utf-8") as f:
+                    _summary = _json.load(f)
+                _summary["token_usage"] = usage
+                with open(summary_path, "w", encoding="utf-8") as f:
+                    _json.dump(_summary, f, ensure_ascii=False, indent=2)
 
         # 等待所有背景記憶彙整任務完成
         if not dry_run:

@@ -19,8 +19,15 @@ EXPERIMENTS: list[dict] = [
         "name": "expC",
         "model": "llama3.1:8b",
         "steps": 1000,
-        "runs": 2,
-        "label": "Experiment C: llama3.1:8b",
+        "runs": 1,
+        "label": "Experiment C: llama3.1:8b — 1000 steps",
+    },
+    {
+        "name": "expG",
+        "model": "gemma4:e2b",
+        "steps": 1000,
+        "runs": 1,
+        "label": "Experiment G: gemma4:e2b — 1000 steps",
     },
 ]
 

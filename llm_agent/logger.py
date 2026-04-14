@@ -143,12 +143,23 @@ class SimulationLogger:
             "tax_brackets": json.dumps(tax_brackets),
         })
 
-    def log_planner_thought(self, step: int, thought: str, comment: str) -> None:
-        """記錄 Planner 的思考過程。"""
+    def log_planner_thought(
+        self,
+        step: int,
+        thought: str,
+        society_comment: str,
+        is_tax_day: bool = False,
+        tax_brackets: list[int] | None = None,
+        short_term_memory: str = "",
+    ) -> None:
+        """Structured planner-only log for both observation and tax-setting steps."""
         self._planner_logs.append({
             "step": step,
             "thought": thought,
-            "society_comment": comment,
+            "society_comment": society_comment,
+            "is_tax_day": is_tax_day,
+            "tax_brackets": json.dumps(tax_brackets) if tax_brackets else "",
+            "short_term_memory": short_term_memory,
         })
 
     def log_thought(
@@ -405,7 +416,8 @@ class SimulationLogger:
         _write_csv(run_dir / "step_metrics.csv", self._step_logs)
         _write_csv(run_dir / "action_log.csv", self._action_logs)
         _write_csv(run_dir / "tax_log.csv", self._tax_logs)
-        _write_csv(run_dir / "planner_thoughts.csv", self._planner_logs)
+        # planner_thoughts.csv 已移除：thought 文字已記錄在 agent_thoughts.xlsx 的
+        # Planner Thoughts sheet，CSV 備份在大型模型下會產生 GB 級檔案。
 
         # 整合輸出
         summary = {
@@ -517,9 +529,22 @@ def _write_thoughts_excel(
     BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     def _safe_cell_value(value):
-        """防止 Excel 將 '=' 開頭的字串誤判為公式。"""
-        if isinstance(value, str) and value.startswith("="):
-            return " " + value
+        """防止 Excel 將 '=' 開頭的字串誤判為公式，並過濾 openpyxl 禁用的控制字元。"""
+        import re
+        _ILLEGAL_CHARS_RE = re.compile(
+            r"[\x00-\x08\x0b-\x0c\x0e-\x1f]"
+        )
+        _EXCEL_MAX_CHARS = 32767
+        if not isinstance(value, str):
+            return value
+        # Strip illegal control characters
+        value = _ILLEGAL_CHARS_RE.sub("", value)
+        # Enforce Excel cell character limit
+        if len(value) > _EXCEL_MAX_CHARS:
+            value = value[:_EXCEL_MAX_CHARS - 20] + "...[truncated]"
+        # Prevent formula injection
+        if value.startswith("="):
+            value = " " + value
         return value
 
     def _header_row(ws, headers: list[str]) -> None:
@@ -720,6 +745,60 @@ def _write_thoughts_excel(
                 cell.border = BORDER
                 cell.alignment = WRAP
             ws6.row_dimensions[ri].height = 50
+
+    # ── Sheet 7: Fallback Summary ─────────────────────────────
+    fallback_logs = [
+        r for r in thought_logs
+        if r["agent_id"] != "planner" and "fallback" in str(r.get("thought", "")).lower()
+    ]
+    ws7 = wb.create_sheet("Fallback Summary")
+
+    # 上半：逐筆 fallback 事件
+    event_headers = ["Step", "Agent ID", "Agent Name", "Thought（摘要）"]
+    _header_row(ws7, event_headers)
+    col_widths7 = [7, 9, 14, 80]
+    for i, w in enumerate(col_widths7, 1):
+        ws7.column_dimensions[get_column_letter(i)].width = w
+
+    for rec in fallback_logs:
+        thought_excerpt = str(rec.get("thought", ""))[:200]
+        row = [rec["step"], rec["agent_id"], rec["agent_name"], _safe_cell_value(thought_excerpt)]
+        ws7.append(row)
+        ri = ws7.max_row
+        fill = AGENT_FILLS.get(str(rec["agent_id"]), PatternFill())
+        for c in range(1, len(event_headers) + 1):
+            cell = ws7.cell(row=ri, column=c)
+            cell.fill = fill
+            cell.border = BORDER
+            cell.alignment = WRAP
+        ws7.row_dimensions[ri].height = 30
+
+    # 空白分隔行
+    ws7.append([])
+
+    # 下半：per-agent 統計摘要
+    summary_title_row = ws7.max_row + 1
+    ws7.append(["Agent ID", "Agent Name", "總步數", "Fallback 次數", "Fallback 率 (%)"])
+    for cell in ws7[summary_title_row]:
+        cell.fill = PatternFill("solid", fgColor="4A4A8A")
+        cell.font = Font(bold=True, color="FFFFFF", size=11)
+        cell.alignment = CENTER
+        cell.border = BORDER
+
+    agent_ids = sorted({r["agent_id"] for r in thought_logs if r["agent_id"] != "planner"})
+    for aid in agent_ids:
+        total = sum(1 for r in thought_logs if r["agent_id"] == aid)
+        fb_count = sum(1 for r in fallback_logs if r["agent_id"] == aid)
+        rate = round(fb_count / total * 100, 2) if total > 0 else 0.0
+        name = next((r["agent_name"] for r in thought_logs if r["agent_id"] == aid), "")
+        ws7.append([aid, name, total, fb_count, rate])
+        ri = ws7.max_row
+        fill = AGENT_FILLS.get(str(aid), PatternFill())
+        for c in range(1, 6):
+            cell = ws7.cell(row=ri, column=c)
+            cell.fill = fill
+            cell.border = BORDER
+            cell.alignment = CENTER
 
     wb.save(path)
     logger.info(f"[Logger] Excel 已儲存：{path}")

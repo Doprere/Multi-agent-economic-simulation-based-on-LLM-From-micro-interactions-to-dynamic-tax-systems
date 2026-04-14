@@ -111,17 +111,11 @@ class PlannerMemory:
 
     def add_entry(self, obs_summary: str, prev_entry: str = "") -> None:
         """
-        生成複合摘要並加入視窗。
-
-        Args:
-            obs_summary: 本步的社會觀察摘要（文字）
-            prev_entry: 前一步的記憶條目（可選，用於延伸記憶）
+        加入本步觀察摘要到滑動視窗。
+        不嵌套 prev_entry，避免遞迴套娃導致 token 爆炸。
+        時序上下文由 deque 視窗本身（最近 N 條）提供。
         """
-        if prev_entry:
-            entry = f"[Observation] {obs_summary}\n[Prior Context] {prev_entry}"
-        else:
-            entry = f"[Observation] {obs_summary}"
-        self._entries.append(entry)
+        self._entries.append(obs_summary)
 
     def get_last_entry(self) -> str:
         """取得最新一條記憶條目，用於下一步的 prev_entry。"""

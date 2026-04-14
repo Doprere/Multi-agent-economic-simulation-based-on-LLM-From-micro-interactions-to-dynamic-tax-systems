@@ -121,6 +121,7 @@ class LLMClient:
     - 強制 JSON schema 輸出
     - 自動 retry（最多 max_retries 次）
     - Exponential backoff on rate limit / timeout
+    - Token 用量追蹤（累積 prompt / completion tokens）
     """
 
     def __init__(self, cfg: LLMConfig) -> None:
@@ -133,6 +134,20 @@ class LLMClient:
             base_url=base_url,
             timeout=cfg.timeout,
         )
+
+        # Token 用量追蹤
+        self._prompt_tokens: int = 0
+        self._completion_tokens: int = 0
+        self._call_count: int = 0
+
+    def get_token_usage(self) -> dict[str, int]:
+        """回傳本次實驗累積的 token 用量。"""
+        return {
+            "prompt_tokens": self._prompt_tokens,
+            "completion_tokens": self._completion_tokens,
+            "total_tokens": self._prompt_tokens + self._completion_tokens,
+            "api_calls": self._call_count,
+        }
 
     async def call(
         self,
@@ -179,6 +194,13 @@ class LLMClient:
                 if content is None:
                     raise ValueError("LLM returned empty response")
                 result = json.loads(content)
+
+                # 累積 token 用量
+                if response.usage is not None:
+                    self._prompt_tokens += response.usage.prompt_tokens
+                    self._completion_tokens += response.usage.completion_tokens
+                self._call_count += 1
+
                 return result
 
             except openai.RateLimitError as e:

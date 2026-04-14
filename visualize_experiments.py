@@ -46,24 +46,20 @@ AGENT_NAMES = {0: "Youth", 1: "Young Adult", 2: "Middle-aged", 3: "Senior"}
 AGENT_COLORS = {0: "#0072B2", 1: "#E69F00", 2: "#009E73", 3: "#CC79A7"}
 AGENT_MARKERS = {0: "o", 1: "s", 2: "^", 3: "D"}
 
-# 每個實驗變體的唯一顏色（model × planner × run）
-EXP_COLORS: dict[str, str] = {
-    "llama3.1:8b_LLM_run1":  "#1f77b4",   # 藍色
-    "llama3.1:8b_LLM_run2":  "#ff7f0e",   # 橘色
-    "llama3.1:8b_Saez_run1": "#2ca02c",   # 綠色
-    "qwen2.5:7b_LLM_run1":  "#d62728",   # 紅色
-    "qwen2.5:7b_LLM_run2":  "#ff9896",   # 淺紅
-    "qwen2.5:3b_LLM_run1":  "#9467bd",   # 紫色
-    "qwen2.5:3b_LLM_run2":  "#98df8a",   # 淺綠
+# 顏色以模型為單位（同模型同色，run 用符號區分）
+MODEL_COLORS: dict[str, str] = {
+    "llama3.1:8b":  "#1f77b4",   # 藍色
+    "qwen2.5:7b":   "#d62728",   # 紅色
+    "qwen2.5:3b":   "#9467bd",   # 紫色
+    "gemma4:e2b":   "#e377c2",   # 粉紅色
+    "gemma4:e4b":   "#8c564b",   # 棕色
+    "gpt-4o-mini":  "#2ca02c",   # 綠色
 }
-EXP_MARKERS: dict[str, str] = {
-    "llama3.1:8b_LLM_run1":  "o",
-    "llama3.1:8b_LLM_run2":  "D",
-    "llama3.1:8b_Saez_run1": "P",
-    "qwen2.5:7b_LLM_run1":  "s",
-    "qwen2.5:7b_LLM_run2":  "p",
-    "qwen2.5:3b_LLM_run1":  "^",
-    "qwen2.5:3b_LLM_run2":  "v",
+# 符號以 run 為單位（run1=圓、run2=方、Saez=星）
+RUN_MARKERS: dict[str, str] = {
+    "run1": "o",
+    "run2": "s",
+    "saez": "P",
 }
 
 ACTION_GROUPS = {
@@ -85,6 +81,12 @@ def detect_model(exp_name: str) -> str:
         return "qwen2.5:7b"
     if "qwen2_5_3b" in exp_name:
         return "qwen2.5:3b"
+    if "gemma4_e2b" in exp_name:
+        return "gemma4:e2b"
+    if "gemma4_e4b" in exp_name:
+        return "gemma4:e4b"
+    if "gpt4o_mini" in exp_name:
+        return "gpt-4o-mini"
     return "unknown"
 
 
@@ -102,26 +104,18 @@ def short_label(exp_dir: Path) -> str:
     return f"{model} {planner_type} {run} ({n}步)"
 
 
-def _exp_key(exp_dir: Path) -> str:
-    """產生唯一色彩查找鍵：model_planner_run"""
-    model = detect_model(exp_dir.name)
-    planner = "Saez" if "saez" in exp_dir.name.lower() else "LLM"
-    run = "run2" if "run2" in exp_dir.name else "run1"
-    return f"{model}_{planner}_{run}"
-
-
 def model_color(exp_dir: Path) -> str:
-    return EXP_COLORS.get(_exp_key(exp_dir), "#888888")
+    return MODEL_COLORS.get(detect_model(exp_dir.name), "#888888")
 
 
 def model_linestyle(exp_dir: Path) -> str:
-    if "saez" in exp_dir.name.lower():
-        return "-."
-    return "--" if "run2" in exp_dir.name else "-"
+    return "-"
 
 
 def model_marker(exp_dir: Path) -> str:
-    return EXP_MARKERS.get(_exp_key(exp_dir), "x")
+    if "saez" in exp_dir.name.lower():
+        return RUN_MARKERS["saez"]
+    return RUN_MARKERS["run2"] if "run2" in exp_dir.name else RUN_MARKERS["run1"]
 
 
 def discover_experiments(base: Path, min_steps: int = 400) -> list[Path]:
@@ -337,31 +331,183 @@ def plot_b2_agent_labor(exp_dir: Path, out_dir: Path) -> None:
     plt.close(fig)
 
 
+def _compute_source_split(
+    df: pd.DataFrame, act_df: pd.DataFrame, agent_idx: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """將 agent 的 Wood/Stone 持有量分別分解為「採集來源」與「交易來源」。
+
+    規則:
+      - wood/stone delta > 0 且 action 屬 Move(46-49) → 計入 gathered
+      - wood/stone delta > 0 且 action 屬 Buy 範圍  → 計入 bought
+      - wood/stone delta < 0 (Build/Sell/其他 outflow) → 按當前 gathered/bought
+        比例同步扣除 (proportional depletion)
+    回傳與 df 同長度的四條 numpy array:
+        (g_wood_arr, b_wood_arr, g_stone_arr, b_stone_arr)
+    """
+    buy_wood_ids = set(range(24, 35))
+    buy_stone_ids = set(range(2, 13))
+    move_ids = {46, 47, 48, 49}
+
+    wood = df[f"wood_agent_{agent_idx}"].to_numpy(dtype=float)
+    stone = df[f"stone_agent_{agent_idx}"].to_numpy(dtype=float)
+    # 以 step 對齊 action_log;若長度不一致以 metrics df 為準
+    act_series = act_df.set_index("step")[f"action_agent_{agent_idx}"]
+    steps = df["step"].to_numpy()
+
+    n = len(steps)
+    g_wood_arr = np.zeros(n)
+    b_wood_arr = np.zeros(n)
+    g_stone_arr = np.zeros(n)
+    b_stone_arr = np.zeros(n)
+
+    g_wood = b_wood = 0.0
+    g_stone = b_stone = 0.0
+    prev_wood = 0.0
+    prev_stone = 0.0
+
+    for t in range(n):
+        w_now = float(wood[t])
+        s_now = float(stone[t])
+        w_delta = w_now - prev_wood
+        s_delta = s_now - prev_stone
+
+        step_val = int(steps[t])
+        action = int(act_series.get(step_val, -1)) if step_val in act_series.index else -1
+
+        # Wood 變化分類
+        if w_delta > 0:
+            if action in move_ids:
+                g_wood += w_delta
+            elif action in buy_wood_ids:
+                b_wood += w_delta
+            else:
+                # 未知來源(例:初始稟賦或資料異常)歸為 gathered 作為預設
+                g_wood += w_delta
+        elif w_delta < 0 and prev_wood > 0:
+            frac = min(1.0, (-w_delta) / prev_wood)
+            g_wood *= (1.0 - frac)
+            b_wood *= (1.0 - frac)
+
+        # Stone 變化分類
+        if s_delta > 0:
+            if action in move_ids:
+                g_stone += s_delta
+            elif action in buy_stone_ids:
+                b_stone += s_delta
+            else:
+                g_stone += s_delta
+        elif s_delta < 0 and prev_stone > 0:
+            frac = min(1.0, (-s_delta) / prev_stone)
+            g_stone *= (1.0 - frac)
+            b_stone *= (1.0 - frac)
+
+        # 數值穩定:防止負值
+        g_wood = max(0.0, g_wood)
+        b_wood = max(0.0, b_wood)
+        g_stone = max(0.0, g_stone)
+        b_stone = max(0.0, b_stone)
+
+        g_wood_arr[t] = g_wood
+        b_wood_arr[t] = b_wood
+        g_stone_arr[t] = g_stone
+        b_stone_arr[t] = b_stone
+
+        prev_wood = w_now
+        prev_stone = s_now
+
+    return g_wood_arr, b_wood_arr, g_stone_arr, b_stone_arr
+
+
 def plot_b3_resource_stock(exp_dir: Path, out_dir: Path) -> None:
-    """B3. 各 Agent 資源庫存（Wood + Stone 堆疊）+ Build 標記"""
+    """B3. 各 Agent Wood/Stone 庫存(採集 vs 交易來源)+ Coin 折線 + Build 事件"""
     df = load_metrics(exp_dir)
     act_df = load_actions(exp_dir)
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8.5), sharex=True)
     axes_flat = axes.flatten()
+
+    coin_color = "#d4a017"
+    # 4 層顏色:Wood = 棕色系,Stone = 灰色系;gathered 深、bought 淺
+    gw_color = "#8c564b"  # Gathered Wood — dark brown
+    bw_color = "#c49c94"  # Bought Wood — light brown
+    gs_color = "#525252"  # Gathered Stone — dark gray
+    bs_color = "#bdbdbd"  # Bought Stone — light gray
+
+    legend_handles: list[Any] = []
+    legend_labels: list[str] = []
+
     for i in range(4):
         ax = axes_flat[i]
-        wood = df[f"wood_agent_{i}"]
-        stone = df[f"stone_agent_{i}"]
-        ax.fill_between(df["step"], 0, wood, alpha=0.6, color="#8B4513", label="Wood")
-        ax.fill_between(df["step"], wood, wood + stone, alpha=0.6, color="#808080", label="Stone")
-        # Build 事件標記
+        steps = df["step"].to_numpy()
+        g_wood, b_wood, g_stone, b_stone = _compute_source_split(df, act_df, i)
+
+        # 左軸:4 層堆疊面積(底 → 頂:gw → bw → gs → bs)
+        y0 = np.zeros_like(g_wood)
+        y1 = g_wood
+        y2 = y1 + b_wood
+        y3 = y2 + g_stone
+        y4 = y3 + b_stone
+
+        h_gw = ax.fill_between(steps, y0, y1, alpha=0.75, color=gw_color,
+                               label="Gathered Wood")
+        h_bw = ax.fill_between(steps, y1, y2, alpha=0.75, color=bw_color,
+                               label="Bought Wood")
+        h_gs = ax.fill_between(steps, y2, y3, alpha=0.75, color=gs_color,
+                               label="Gathered Stone")
+        h_bs = ax.fill_between(steps, y3, y4, alpha=0.75, color=bs_color,
+                               label="Bought Stone")
+
+        ax.set_ylabel("Units", fontsize=8)
+        ax.tick_params(axis="y", labelsize=7)
+
+        # 右軸:Coin 折線
+        ax_twin = ax.twinx()
+        coin_line, = ax_twin.plot(
+            df["step"], df[f"coin_agent_{i}"],
+            color=coin_color, linewidth=1.8,
+            marker=AGENT_MARKERS[i], markevery=max(1, len(df) // 12),
+            markersize=5, markerfacecolor=coin_color,
+            markeredgecolor="black", markeredgewidth=0.4,
+            label="Coin",
+        )
+        ax_twin.set_ylabel("Coin", fontsize=8, color=coin_color)
+        ax_twin.tick_params(axis="y", labelsize=7, colors=coin_color)
+
+        # Build 事件紅線
         build_steps = act_df.loc[act_df[f"action_agent_{i}"] == 1, "step"]
+        build_handle = None
         for bs in build_steps:
-            ax.axvline(bs, color="red", alpha=0.5, linewidth=0.8)
+            build_handle = ax.axvline(bs, color="red", alpha=0.5, linewidth=0.8)
+
         ax.set_title(f"Agent {i} ({AGENT_NAMES[i]})", fontsize=9)
-        ax.set_ylabel("Units")
+        ax.grid(True, axis="x", alpha=0.2)
+
         if i == 0:
-            ax.legend(fontsize=7)
+            legend_handles = [h_gw, h_bw, h_gs, h_bs, coin_line]
+            legend_labels = [
+                "Gathered Wood", "Bought Wood",
+                "Gathered Stone", "Bought Stone",
+                "Coin",
+            ]
+            if build_handle is not None:
+                legend_handles.append(build_handle)
+                legend_labels.append("Build 事件")
+
     axes_flat[2].set_xlabel("Step")
     axes_flat[3].set_xlabel("Step")
-    fig.suptitle(f"B3. 資源庫存 (Wood+Stone) + Build 事件(紅線) — {exp_dir.name}", fontsize=11)
-    fig.tight_layout()
-    fig.savefig(out_dir / "B3_resource_stock.png", dpi=DPI)
+
+    if legend_handles:
+        fig.legend(
+            legend_handles, legend_labels,
+            loc="upper center", ncol=len(legend_handles),
+            fontsize=8, bbox_to_anchor=(0.5, 0.97),
+            frameon=True,
+        )
+    fig.suptitle(
+        f"B3. Wood/Stone 庫存(採集 vs 交易)+ Coin 折線 + Build 事件 — {exp_dir.name}",
+        fontsize=11, y=1.0,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.savefig(out_dir / "B3_resource_stock.png", dpi=DPI, bbox_inches="tight")
     plt.close(fig)
 
 

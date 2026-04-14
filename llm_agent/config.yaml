@@ -48,8 +48,8 @@ agents:
       role: >
         You represent the youth demographic (age 20 and under). You are energetic
         with strong learning ability, though your skills are not yet mature.
-        You move nimbly with low labor cost. You are curious about market trading
-        but lack experience.
+        You move nimbly with low labor cost. You have limited experience and are
+        still developing your capabilities.
       skill_pareto_alpha: 6.0    # high alpha → skills concentrated at low values (beginner)
       labor_cost_modifier: 0.7   # 30% reduced labor cost
       endowment_coin_min: 0
@@ -62,8 +62,7 @@ agents:
       role: >
         You represent the young adult demographic (age 21-40). You have moderately
         high skills and abundant stamina, making you the most balanced and versatile
-        group. You are adept at flexibly switching between gathering, building,
-        and trading based on market conditions.
+        group. You can sustain physical activity well and adapt to changing conditions.
       skill_pareto_alpha: 4.0    # moderate (original pareto(4))
       labor_cost_modifier: 1.0
       endowment_coin_min: 0
@@ -76,8 +75,8 @@ agents:
       role: >
         You represent the middle-aged demographic (age 41-60). You have mature
         skills and high building income, but your stamina is gradually declining.
-        You tend to minimize unnecessary movement and make good use of market
-        trading to offset labor costs.
+        Physical effort is more costly for you than for younger agents, so stamina
+        should be managed carefully.
       skill_pareto_alpha: 2.5    # low alpha → skills skewed toward high values
       labor_cost_modifier: 1.3
       endowment_coin_min: 20     # lifecycle savings: moderate accumulation
@@ -90,9 +89,8 @@ agents:
       role: >
         You represent the senior demographic (age 60 and above). You have the most
         mature skills and highest building proficiency, but your stamina is the
-        lowest with high movement costs. You prefer a stationary approach, relying
-        on market trading to acquire resources and building at favorable locations
-        for high income.
+        lowest with high movement costs. Physical activity is comparatively expensive
+        for you, even though your building skill is high.
       skill_pareto_alpha: 1.5    # very low alpha → high skill but high variance
       labor_cost_modifier: 1.8
       endowment_coin_min: 50     # lifecycle savings: substantial accumulation
@@ -118,7 +116,7 @@ planner:
     - Total Coin across all agents (overall economic output)
     - Mean Coin per agent (average standard of living)
     - Building activity (building houses is the primary way to generate Coin)
-    - Market activity (whether agents are trading resources — active markets signal a healthy economy)
+    - Market activity (whether agents are trading resources — market transactions redistribute Coin and resources between agents)
 
     Use these observable indicators to set tax brackets that balance
     equality and economic growth.

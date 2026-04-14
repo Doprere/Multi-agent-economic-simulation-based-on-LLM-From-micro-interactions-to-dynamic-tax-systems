@@ -398,6 +398,28 @@ async def run_episode(
         sim_logger.save()
 
         if not dry_run:
+            # ── Token 用量摘要 ──────────────────────────────
+            if ollama_client:
+                usage = ollama_client.get_token_usage()
+                print("\n" + "─"*45)
+                print(" Token 用量摘要")
+                print("─"*45)
+                print(f"  API 呼叫次數 : {usage['api_calls']:>10,}")
+                print(f"  Prompt tokens: {usage['prompt_tokens']:>10,}")
+                print(f"  Output tokens: {usage['completion_tokens']:>10,}")
+                print(f"  Total tokens : {usage['total_tokens']:>10,}")
+                print("─"*45)
+
+                # 附加至 summary.json
+                import json as _json
+                summary_path = sim_logger.output_dir / sim_logger.run_name / "summary.json"
+                if summary_path.exists():
+                    with open(summary_path, encoding="utf-8") as f:
+                        _summary = _json.load(f)
+                    _summary["token_usage"] = usage
+                    with open(summary_path, "w", encoding="utf-8") as f:
+                        _json.dump(_summary, f, ensure_ascii=False, indent=2)
+
             # 等待背景記憶彙整
             pending = [
                 a._consolidation_task

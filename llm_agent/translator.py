@@ -211,9 +211,7 @@ class ObsTranslator:
             "    Buy Wood (actions 24-34, bid price 0-10) | Sell Wood (actions 35-45, ask price 0-10)",
             "    * BUY locks your Coin in escrow. SELL locks 1 resource. Orders expire after 50 steps.",
             "    * Trade executes when bid price >= ask price. Each order costs 0.25 labor.",
-            "    * To buy quickly: bid >= lowest ask. To sell quickly: ask <= highest bid.",
-            "    * Bidding at price 0 almost never works.",
-            "  - Ways to earn Coin: Build houses OR sell resources to other agents on the market.",
+            "  - Coin can change through building activity and market trades.",
             "  - NOOP (action 0): Do nothing this step.",
             "",
             "[Personal Status]",
@@ -256,22 +254,6 @@ class ObsTranslator:
                     f"  WARNING: You have {total}/{max_orders} open orders for {res} — "
                     f"no more {res} orders until existing ones fill or expire!"
                 )
-
-        # Dynamic pricing tips based on current market state
-        w_ask = wm.get("lowest_ask")
-        w_bid = wm.get("highest_bid")
-        s_ask = sm.get("lowest_ask")
-        s_bid = sm.get("highest_bid")
-        if w_ask is not None or w_bid is not None or s_ask is not None or s_bid is not None:
-            lines.append("  Quick reference:")
-            if w_ask is not None:
-                lines.append(f"    -> To buy Wood now, bid >= {w_ask} Coin (match the lowest ask)")
-            if w_bid is not None:
-                lines.append(f"    -> To sell Wood now, ask <= {w_bid} Coin (match the highest bid)")
-            if s_ask is not None:
-                lines.append(f"    -> To buy Stone now, bid >= {s_ask} Coin (match the lowest ask)")
-            if s_bid is not None:
-                lines.append(f"    -> To sell Stone now, ask <= {s_bid} Coin (match the highest bid)")
 
         # Show blocked movement directions
         blocked_dirs = []

@@ -63,11 +63,11 @@ class PlannerLLM:
     def _tax_system_prompt(self) -> str:
         return (
             f"You are the '{self.cfg.display_name}'. {self.cfg.role.strip()}\n\n"
-            "TAX ADJUSTMENT TIME! Set the optimal tax brackets based on your observations.\n\n"
+            "TAX ADJUSTMENT TIME! Choose tax brackets justified by your observations.\n\n"
             "Tax bracket rules:\n"
             "- tax_brackets is an integer list; each element is the tax rate index (0-21) for that bracket.\n"
             "- Index 0 = 0% tax rate, index 21 = 100% tax rate (~5% per step).\n"
-            "- Progressive taxation is recommended: lower brackets get lower rates.\n"
+            "- Tax brackets may be flat, progressive, or regressive; choose the pattern justified by your observations.\n"
             "- List length must match the number of tax brackets in the environment (usually 7, US Federal).\n\n"
             'Output format: {"thought": "...", "tax_brackets": [<integer list>]}'
         )
@@ -137,8 +137,8 @@ class PlannerLLM:
                 user_prompt=state_desc,
                 context=memory_ctx,
             )
-            thought = result.get("thought", "")
-            comment = result.get("society_comment", "")
+            thought = result.get("thought") or ""
+            comment = result.get("society_comment") or ""
             obs_summary = f"{thought} | {comment}"
 
         except Exception as e:
@@ -160,6 +160,13 @@ class PlannerLLM:
                 society_comment=comment,
                 short_term_memory=memory_ctx,
                 is_tax_day=False,
+            )
+            self.sim_logger.log_planner_thought(
+                step=step,
+                thought=thought,
+                society_comment=comment,
+                is_tax_day=False,
+                short_term_memory=memory_ctx,
             )
 
         logger.info(f"[Planner] step={step} memory updated")
@@ -200,8 +207,20 @@ class PlannerLLM:
                 user_prompt=user_prompt,
                 context=memory_ctx,
             )
-            thought = result.get("thought", "")
+            thought = result.get("thought") or ""
             tax_brackets = result.get("tax_brackets", [])
+
+            # Fix B: retry once if model returned null thought
+            if not thought:
+                logger.warning(f"[Planner] step={step}: tax thought is null, retrying once...")
+                retry = await self.client.call_planner_tax(
+                    system_prompt=self._tax_system_prompt(),
+                    user_prompt=user_prompt,
+                    context=memory_ctx,
+                )
+                thought = retry.get("thought") or "(model returned null thought)"
+                if retry.get("tax_brackets"):
+                    tax_brackets = retry.get("tax_brackets", tax_brackets)
 
             # 驗證並修正
             tax_brackets = self._validate_brackets(tax_brackets, n_brackets)
@@ -222,6 +241,14 @@ class PlannerLLM:
                     tax_brackets=tax_brackets,
                     short_term_memory=memory_ctx,
                     is_tax_day=True,
+                )
+                self.sim_logger.log_planner_thought(
+                    step=step,
+                    thought=thought,
+                    society_comment="",
+                    is_tax_day=True,
+                    tax_brackets=tax_brackets,
+                    short_term_memory=memory_ctx,
                 )
 
             logger.info(
@@ -245,6 +272,14 @@ class PlannerLLM:
                     tax_brackets=fallback,
                     short_term_memory=memory_ctx,
                     is_tax_day=True,
+                )
+                self.sim_logger.log_planner_thought(
+                    step=step,
+                    thought=f"(tax step failed: {e})",
+                    society_comment=str(e),
+                    is_tax_day=True,
+                    tax_brackets=fallback,
+                    short_term_memory=memory_ctx,
                 )
             return fallback
 

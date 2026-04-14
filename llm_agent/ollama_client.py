@@ -20,6 +20,49 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+AGENT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "thought": {"type": "string"},
+        "action_id": {"type": "integer"},
+    },
+    "required": ["thought", "action_id"],
+    "additionalProperties": False,
+}
+
+PLANNER_OBSERVE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "thought": {"type": "string"},
+        "society_comment": {"type": "string"},
+    },
+    "required": ["thought", "society_comment"],
+    "additionalProperties": False,
+}
+
+PLANNER_TAX_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "thought": {"type": "string"},
+        "tax_brackets": {
+            "type": "array",
+            "items": {"type": "integer"},
+        },
+    },
+    "required": ["thought", "tax_brackets"],
+    "additionalProperties": False,
+}
+
+CONSOLIDATION_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+    },
+    "required": ["summary"],
+    "additionalProperties": False,
+}
+
+
 # ──────────────────────────────────────────────────────────────
 #  JSON 萃取工具
 # ──────────────────────────────────────────────────────────────
@@ -120,9 +163,23 @@ class OllamaClient:
         self.temperature = temperature
         self._client = httpx.AsyncClient(timeout=timeout)
 
+        # Token 用量追蹤（Ollama: prompt_eval_count / eval_count）
+        self._prompt_tokens: int = 0
+        self._completion_tokens: int = 0
+        self._call_count: int = 0
+
+    def get_token_usage(self) -> dict[str, int]:
+        """回傳本次實驗累積的 token 用量。"""
+        return {
+            "prompt_tokens": self._prompt_tokens,
+            "completion_tokens": self._completion_tokens,
+            "total_tokens": self._prompt_tokens + self._completion_tokens,
+            "api_calls": self._call_count,
+        }
+
     # ── 核心 HTTP 呼叫 ────────────────────────────────────────
 
-    async def _generate(self, prompt: str) -> str:
+    async def _generate(self, prompt: str, response_format: dict[str, Any] | str | None = None) -> str:
         """
         呼叫 Ollama /api/generate 端點，回傳完整回應文字。
         使用 stream=False 取得單次完整回應。
@@ -134,12 +191,20 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": self.temperature,
-                "num_predict": 512,
+                "num_predict": 1024,
             },
         }
+        if response_format is not None:
+            payload["format"] = response_format
         resp = await self._client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
+
+        # 累積 token 用量（Ollama 回傳 prompt_eval_count / eval_count）
+        self._prompt_tokens += data.get("prompt_eval_count", 0)
+        self._completion_tokens += data.get("eval_count", 0)
+        self._call_count += 1
+
         return data.get("response", "")
 
     async def call(
@@ -147,6 +212,7 @@ class OllamaClient:
         system_prompt: str,
         user_prompt: str,
         json_hint: str,
+        response_format: dict[str, Any] | str | None = None,
         context: str = "",
     ) -> dict[str, Any]:
         """
@@ -174,7 +240,7 @@ class OllamaClient:
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
-                raw = await self._generate(full_prompt)
+                raw = await self._generate(full_prompt, response_format=response_format)
                 result = _extract_json(raw)
                 return result
 
@@ -212,7 +278,9 @@ class OllamaClient:
     ) -> dict[str, Any]:
         """MobileAgent 決策：回傳 {thought, action_id}"""
         return await self.call(
-            system_prompt, user_prompt, _AGENT_JSON_HINT, context
+            system_prompt, user_prompt, _AGENT_JSON_HINT,
+            response_format=AGENT_JSON_SCHEMA,
+            context=context,
         )
 
     async def call_planner_observe(
@@ -223,7 +291,9 @@ class OllamaClient:
     ) -> dict[str, Any]:
         """Planner 非稅收日觀察：回傳 {thought, society_comment}"""
         return await self.call(
-            system_prompt, user_prompt, _OBSERVE_JSON_HINT, context
+            system_prompt, user_prompt, _OBSERVE_JSON_HINT,
+            response_format=PLANNER_OBSERVE_JSON_SCHEMA,
+            context=context,
         )
 
     async def call_planner_tax(
@@ -234,7 +304,9 @@ class OllamaClient:
     ) -> dict[str, Any]:
         """Planner 稅收日決策：回傳 {thought, tax_brackets}"""
         return await self.call(
-            system_prompt, user_prompt, _TAX_JSON_HINT, context
+            system_prompt, user_prompt, _TAX_JSON_HINT,
+            response_format=PLANNER_TAX_JSON_SCHEMA,
+            context=context,
         )
 
     async def call_consolidation(self, prompt: str) -> str:
@@ -246,6 +318,7 @@ class OllamaClient:
             ),
             user_prompt=prompt,
             json_hint=_CONSOLIDATION_JSON_HINT,
+            response_format=CONSOLIDATION_JSON_SCHEMA,
         )
         return result.get("summary", "")
 
