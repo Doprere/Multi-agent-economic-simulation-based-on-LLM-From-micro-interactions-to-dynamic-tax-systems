@@ -419,11 +419,30 @@ class SimulationLogger:
         # planner_thoughts.csv 已移除：thought 文字已記錄在 agent_thoughts.xlsx 的
         # Planner Thoughts sheet，CSV 備份在大型模型下會產生 GB 級檔案。
 
-        # 整合輸出
+        # final_metrics 保留最後一步的「快照」性指標（coin/wood/stone/labor/gini/reward）
+        # 但移除 per-step 0/1 指標（build_*），避免讀者誤以為它們是累積值
+        last_step = self._step_logs[-1] if self._step_logs else {}
+        final_metrics = {
+            k: v for k, v in last_step.items() if not k.startswith("build_")
+        }
+
+        # cumulative_metrics 累加 per-step 指標，回答「整段模擬發生了多少次 X」
+        build_agent_keys = sorted(
+            k for k in last_step.keys() if k.startswith("build_agent_")
+        )
+        cumulative_metrics = {
+            "build_total": sum(r.get("build_total", 0) for r in self._step_logs),
+            **{
+                k: sum(r.get(k, 0) for r in self._step_logs)
+                for k in build_agent_keys
+            },
+        }
+
         summary = {
             "run_name": self.run_name,
             "total_steps": len(self._step_logs),
-            "final_metrics": self._step_logs[-1] if self._step_logs else {},
+            "final_metrics": final_metrics,
+            "cumulative_metrics": cumulative_metrics,
             "tax_count": len(self._tax_logs),
         }
         with open(run_dir / "summary.json", "w", encoding="utf-8") as f:

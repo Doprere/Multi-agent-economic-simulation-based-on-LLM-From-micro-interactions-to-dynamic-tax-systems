@@ -440,59 +440,51 @@ async def run_episode(
 # ──────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="AI Economist — Ollama LLM Simulation",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--steps", type=int, default=None,
-        help="最大模擬步數（覆蓋 config）",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="不呼叫 LLM，使用隨機動作測試",
-    )
-    parser.add_argument(
-        "--run-name", type=str, default=None,
-        help="輸出資料夾名稱（預設自動加時間戳）",
-    )
-    parser.add_argument(
-        "--output-dir", type=str, default="simulation_results",
-        help="輸出根目錄（預設 simulation_results）",
-    )
-    parser.add_argument(
-        "--config", type=str, default=None,
-        help="config.yaml 路徑（預設 llm_agent/config.yaml）",
-    )
-    parser.add_argument(
-        "--ollama-url", type=str, default="http://localhost:11434",
-        help="Ollama API 服務位址",
-    )
-    parser.add_argument(
-        "--model", type=str, default="llama3:8b",
-        help="Ollama 模型名稱",
-    )
-    parser.add_argument(
-        "--debug", action="store_true",
-        help="啟用 DEBUG 日誌",
-    )
-    args = parser.parse_args()
+    """[DEPRECATED] 此入口已合併至 run_simulation.py（Ollama 模式）。
 
-    setup_logging(logging.DEBUG if args.debug else logging.INFO)
+    保留本 stub 作為過渡期；將舊 CLI flag 翻譯後委派至新入口：
+      --model X        → --agent-model X
+      （並自動注入 --agent-backend ollama）
+      --ollama-url X   → --ollama-url X（同名，直接傳遞）
+      其餘 flag（--steps / --dry-run / --run-name / --output-dir / --config /
+      --debug）在新入口完全相容，無需轉譯。
+    """
+    print("─" * 70)
+    print("[DEPRECATED] `python ollama_simulation.py` 已併入統一入口。")
+    print("             請改用：python run_simulation.py --agent-backend ollama \\")
+    print("                        --agent-model <MODEL> [--ollama-url <URL>] [...]")
+    print("             本次呼叫將翻譯舊 flag 後委派至新入口。")
+    print("─" * 70)
 
-    cfg = load_config(args.config)
+    # 翻譯 sys.argv：注入 --agent-backend ollama，並將 --model 改名為 --agent-model
+    import sys as _sys
 
-    asyncio.run(
-        run_episode(
-            cfg=cfg,
-            ollama_url=args.ollama_url,
-            ollama_model=args.model,
-            max_steps=args.steps,
-            dry_run=args.dry_run,
-            run_name=args.run_name,
-            output_dir=args.output_dir,
-        )
-    )
+    translated: list[str] = []
+    has_agent_backend = False
+    i = 0
+    argv = _sys.argv[1:]
+    while i < len(argv):
+        token = argv[i]
+        if token == "--model":
+            translated.extend(["--agent-model", argv[i + 1]])
+            i += 2
+            continue
+        if token.startswith("--model="):
+            translated.append("--agent-model=" + token.split("=", 1)[1])
+            i += 1
+            continue
+        if token == "--agent-backend" or token.startswith("--agent-backend="):
+            has_agent_backend = True
+        translated.append(token)
+        i += 1
+
+    if not has_agent_backend:
+        translated = ["--agent-backend", "ollama"] + translated
+
+    _sys.argv = [_sys.argv[0]] + translated
+
+    from run_simulation import main as _new_main
+    _new_main()
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import yaml
 
 @dataclass
 class LLMConfig:
+    backend: str = "openai"        # "openai" | "ollama"
     model: str = "gpt-4o-mini"
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
@@ -74,6 +75,8 @@ class AppConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     personas: list[PersonaConfig] = field(default_factory=list)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
+    # 選填：若存在，Planner 使用此組 LLM 設定；缺省時 Planner 與 Agents 共用同一 client
+    llm_planner: LLMConfig | None = None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -127,6 +130,14 @@ def load_config(path: Path | str | None = None) -> AppConfig:
         if env_url:
             llm_raw["base_url"] = env_url
 
+    # Planner 專用 LLM 設定（選填）
+    planner_llm_raw = raw.get("llm_planner")
+    planner_llm_cfg: LLMConfig | None = None
+    if planner_llm_raw:
+        if not planner_llm_raw.get("api_key"):
+            planner_llm_raw["api_key"] = os.environ.get("OPENAI_API_KEY", "")
+        planner_llm_cfg = LLMConfig(**planner_llm_raw)
+
     # 環境設定
     env_raw = raw.get("environment", {})
     components = _build_component_list(env_raw.pop("components", []))
@@ -152,6 +163,7 @@ def load_config(path: Path | str | None = None) -> AppConfig:
         memory=mem_cfg,
         personas=personas,
         planner=planner_cfg,
+        llm_planner=planner_llm_cfg,
     )
     return _CONFIG
 

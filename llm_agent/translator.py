@@ -209,8 +209,11 @@ class ObsTranslator:
             "  - Trading: Buy/sell resources on the market.",
             "    Buy Stone (actions 2-12, bid price 0-10) | Sell Stone (actions 13-23, ask price 0-10)",
             "    Buy Wood (actions 24-34, bid price 0-10) | Sell Wood (actions 35-45, ask price 0-10)",
-            "    * BUY locks your Coin in escrow. SELL locks 1 resource. Orders expire after 50 steps.",
+            "    * BUY locks your Coin in escrow. SELL locks 1 resource. Orders expire after 20 steps.",
             "    * Trade executes when bid price >= ask price. Each order costs 0.25 labor.",
+            "    * Avoid price 0: bidding 0 Coin asks someone to give you the resource for free, "
+            "and asking 0 Coin means giving your resource away for free — neither almost ever happens "
+            "in a normal economy. Use market_rate as a reference when pricing.",
             "  - Coin can change through building activity and market trades.",
             "  - NOOP (action 0): Do nothing this step.",
             "",
@@ -240,19 +243,29 @@ class ObsTranslator:
             f"Stone: {sm.get('my_bids_count',0)} buy / {sm.get('my_asks_count',0)} sell",
         ]
 
-        # Order limit warnings
+        # Order limit warnings with explicit action-range + alternative guidance
         try:
             cda_comp = env.get_component("ContinuousDoubleAuction")
             max_orders = cda_comp.max_num_orders
+            order_duration = cda_comp.order_duration
         except (KeyError, AttributeError):
-            max_orders = 5  # fallback to config default
+            max_orders = 5
+            order_duration = 20
+
+        blocked_action_ranges = {
+            "Wood":  "24-45 (all Wood buy/sell)",
+            "Stone": "2-23 (all Stone buy/sell)",
+        }
 
         for res, m in [("Wood", wm), ("Stone", sm)]:
             total = m.get("my_bids_count", 0) + m.get("my_asks_count", 0)
             if total >= max_orders:
                 lines.append(
-                    f"  WARNING: You have {total}/{max_orders} open orders for {res} — "
-                    f"no more {res} orders until existing ones fill or expire!"
+                    f"  ORDER LIMIT REACHED — {res}: {total}/{max_orders} open orders. "
+                    f"Actions {blocked_action_ranges[res]} are now UNAVAILABLE. "
+                    f"Unfilled orders auto-expire within {order_duration} steps, "
+                    f"freeing these actions again. "
+                    f"Until then, focus on Gather / Build / Move or trade the OTHER resource."
                 )
 
         # Show blocked movement directions

@@ -15,6 +15,7 @@ environment:
         payment_max_skill_multiplier: 3
     - ContinuousDoubleAuction:
         max_num_orders: 5
+        order_duration: 20
         max_bid_ask: 10
         order_labor: 0.25
     - Gather:
@@ -27,12 +28,29 @@ environment:
         disable_taxes: false
 
 llm:
-  model: "gpt-4o-mini"
-  base_url: "https://api.openai.com/v1"
+  backend: "ollama"    # "openai" | "ollama"；為 Agents 的預設 LLM 設定
+  model: "gemma4:e2b"
+  base_url: "http://localhost:11434"
   api_key: ""          # 可留空，優先讀環境變數 OPENAI_API_KEY
   max_retries: 3
   temperature: 0.7
   timeout: 30
+
+# ────────────────────────────────────────────────────────────────
+# 選填：llm_planner — 若存在，Planner 獨立使用此組設定（Agents 仍用 llm:）
+# 缺省時 Planner 與 Agents 共用同一 client 實例（向後相容）
+#
+# 範例：Planner 用雲端強模型，4 個 MobileAgent 用本地弱模型
+#
+llm_planner:
+  backend: "openai"
+  model: "gpt-4o-mini"
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  max_retries: 3
+  temperature: 0.7
+  timeout: 30
+# ────────────────────────────────────────────────────────────────
 
 memory:
   agent_short_term_window: 8     # 短期記憶滑動視窗（保留最近 N 步 thought）
