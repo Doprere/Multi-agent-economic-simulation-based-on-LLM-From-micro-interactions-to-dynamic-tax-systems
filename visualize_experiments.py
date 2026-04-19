@@ -46,21 +46,64 @@ AGENT_NAMES = {0: "Youth", 1: "Young Adult", 2: "Middle-aged", 3: "Senior"}
 AGENT_COLORS = {0: "#0072B2", 1: "#E69F00", 2: "#009E73", 3: "#CC79A7"}
 AGENT_MARKERS = {0: "o", 1: "s", 2: "^", 3: "D"}
 
-# 顏色以模型為單位（同模型同色，run 用符號區分）
-MODEL_COLORS: dict[str, str] = {
-    "llama3.1:8b":  "#1f77b4",   # 藍色
-    "qwen2.5:7b":   "#d62728",   # 紅色
-    "qwen2.5:3b":   "#9467bd",   # 紫色
-    "gemma4:e2b":   "#e377c2",   # 粉紅色
-    "gemma4:e4b":   "#8c564b",   # 棕色
-    "gpt-4o-mini":  "#2ca02c",   # 綠色
+# ---------------------------------------------------------------------------
+# 色彩系統（跨實驗比較）
+# ---------------------------------------------------------------------------
+# 設計：
+#   • 色 = (agent_model, planner_model) 組合；不同組合自動分派不同顏色
+#   • 線型 = run 編號（run1 實線 / run2 虛線 / run3 點線）
+#   • 符號 = planner backend（openai 圓 / ollama 方 / saez 星）
+#   • Saez（rule-based）固定深灰，與 LLM planner 視覺區隔
+#   • 相同 combo 在多次執行間色彩穩定（靠 preload_combo_colors 預排序分派）
+#
+# 色盲友善調色盤（Okabe-Ito 擴充 + tab10），高對比、適合論文列印
+PALETTE: list[str] = [
+    "#0072B2",  # 藍
+    "#D55E00",  # 朱紅
+    "#009E73",  # 綠
+    "#CC79A7",  # 洋紅
+    "#E69F00",  # 橘
+    "#56B4E9",  # 天藍
+    "#F0E442",  # 黃
+    "#8c564b",  # 棕
+    "#9467bd",  # 紫
+    "#17becf",  # 青
+    "#bcbd22",  # 橄欖
+    "#e377c2",  # 粉
+]
+SAEZ_COLOR: str = "#444444"
+
+# planner backend → 符號；未命中回落 "o"
+PLANNER_MARKERS: dict[str, str] = {
+    "openai": "o",
+    "ollama": "s",
+    "saez":   "P",
 }
-# 符號以 run 為單位（run1=圓、run2=方、Saez=星）
-RUN_MARKERS: dict[str, str] = {
-    "run1": "o",
-    "run2": "s",
-    "saez": "P",
+
+# run 編號 → 線型；未命中回落 "-"
+RUN_LINESTYLES: dict[str, str] = {
+    "run1": "-",
+    "run2": "--",
+    "run3": ":",
 }
+
+# (agent_model, planner_model) → 色；由 preload_combo_colors 填充
+_COMBO_COLOR_CACHE: dict[tuple[str, str], str] = {}
+
+
+def _assign_combo_color(agent_model: str, planner_model: str) -> str:
+    """分派或取回 combo 顏色。Saez 固定；其他依登記順序從 PALETTE 取。"""
+    key = (agent_model, planner_model)
+    if key in _COMBO_COLOR_CACHE:
+        return _COMBO_COLOR_CACHE[key]
+    if planner_model == "saez":
+        _COMBO_COLOR_CACHE[key] = SAEZ_COLOR
+        return SAEZ_COLOR
+    non_saez_count = sum(1 for p in _COMBO_COLOR_CACHE.values() if p != SAEZ_COLOR)
+    color = PALETTE[non_saez_count % len(PALETTE)]
+    _COMBO_COLOR_CACHE[key] = color
+    return color
+
 
 ACTION_GROUPS = {
     "NOOP": {0},
@@ -73,49 +116,152 @@ ACTION_GROUPS = {
 # ---------------------------------------------------------------------------
 # 工具函式
 # ---------------------------------------------------------------------------
+# 目錄名子字串 → 模型名（涵蓋舊底線命名與新壓縮命名）
+_NAME_TO_MODEL: list[tuple[str, str]] = [
+    ("llama3_1_8b",  "llama3.1:8b"),
+    ("qwen2_5_7b",   "qwen2.5:7b"),
+    ("qwen2_5_3b",   "qwen2.5:3b"),
+    ("gemma4_e2b",   "gemma4:e2b"),
+    ("gemma4_e4b",   "gemma4:e4b"),
+    ("gpt4o_mini",   "gpt-4o-mini"),
+    ("ge4e2b",       "gemma4:e2b"),
+    ("ge4e4b",       "gemma4:e4b"),
+    ("gpt4omi",      "gpt-4o-mini"),
+    ("ll318b",       "llama3.1:8b"),
+    ("qw257b",       "qwen2.5:7b"),
+    ("qw253b",       "qwen2.5:3b"),
+]
+
+
+def _guess_models_from_name(exp_name: str) -> tuple[str, str]:
+    """從目錄名推斷 (agent_model, planner_model)。
+
+    命名慣例為 `{agent}_{planner}_...` 或單段 `{agent}_...`（共用）。
+    先找第一個命中當 agent、後續命中當 planner；都沒命中則 planner=agent。
+    """
+    lower = exp_name.lower()
+    hits: list[tuple[int, str]] = []
+    for key, model in _NAME_TO_MODEL:
+        idx = lower.find(key)
+        if idx >= 0:
+            hits.append((idx, model))
+    hits.sort()
+    if not hits:
+        return ("unknown", "unknown")
+    agent = hits[0][1]
+    planner = hits[1][1] if len(hits) > 1 else agent
+    return (agent, planner)
+
+
+def load_meta(exp_dir: Path) -> dict[str, str]:
+    """從 summary.json 讀取權威 metadata；缺失時 fallback 解析目錄名。
+
+    回傳 {agent_model, agent_backend, planner_model, planner_backend}。
+    Planner 共用 agent client 時沿用 agent 欄位；Saez 規則式 planner 以
+    目錄名 "saez" 子字串為 fallback（它不寫 token_usage.planner）。
+    """
+    summary_path = exp_dir / "summary.json"
+    is_saez_dir = "saez" in exp_dir.name.lower()
+    meta = {
+        "agent_model": "unknown",
+        "agent_backend": "unknown",
+        "planner_model": "saez" if is_saez_dir else "unknown",
+        "planner_backend": "saez" if is_saez_dir else "unknown",
+    }
+    if summary_path.exists():
+        try:
+            with open(summary_path, "r", encoding="utf-8") as f:
+                summary = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            summary = {}
+        tu = summary.get("token_usage") or {}
+        agent = tu.get("agents") or {}
+        planner = tu.get("planner") or {}
+        if planner.get("shared_with_agents"):
+            planner = agent
+        if agent.get("model"):
+            meta["agent_model"] = agent["model"]
+        if agent.get("backend"):
+            meta["agent_backend"] = agent["backend"]
+        if planner.get("model"):
+            meta["planner_model"] = planner["model"]
+            meta["planner_backend"] = planner.get("backend", meta["planner_backend"])
+        elif is_saez_dir:
+            meta["planner_model"] = "saez"
+            meta["planner_backend"] = "saez"
+    # Fallback：metadata 缺失時由目錄名推斷（相容舊實驗 summary.json）
+    if meta["agent_model"] == "unknown" or meta["planner_model"] == "unknown":
+        guess_agent, guess_planner = _guess_models_from_name(exp_dir.name)
+        if meta["agent_model"] == "unknown" and guess_agent != "unknown":
+            meta["agent_model"] = guess_agent
+        if meta["planner_model"] == "unknown":
+            if is_saez_dir:
+                meta["planner_model"] = "saez"
+                meta["planner_backend"] = "saez"
+            elif guess_planner != "unknown":
+                meta["planner_model"] = guess_planner
+    return meta
+
+
+def _run_tag(exp_name: str) -> str:
+    """抽取 run 編號（run1 / run2 / run3），預設 run1。"""
+    name = exp_name.lower()
+    for tag in ("run3", "run2", "run1"):
+        if tag in name:
+            return tag
+    return "run1"
+
+
 def detect_model(exp_name: str) -> str:
-    """從實驗資料夾名稱推斷模型。"""
-    if "llama3_1_8b" in exp_name:
-        return "llama3.1:8b"
-    if "qwen2_5_7b" in exp_name:
-        return "qwen2.5:7b"
-    if "qwen2_5_3b" in exp_name:
-        return "qwen2.5:3b"
-    if "gemma4_e2b" in exp_name:
-        return "gemma4:e2b"
-    if "gemma4_e4b" in exp_name:
-        return "gemma4:e4b"
-    if "gpt4o_mini" in exp_name:
-        return "gpt-4o-mini"
-    return "unknown"
+    """向後相容：從 metadata 推斷 agent 模型。
+
+    保留此函式避免外部依賴破損；新程式請改用 load_meta()。
+    """
+    return load_meta(Path(exp_name) if "/" in exp_name or "\\" in exp_name
+                     else Path("simulation_results") / exp_name)["agent_model"]
 
 
 def short_label(exp_dir: Path) -> str:
-    """產生簡短的圖例標籤，例如 'llama3.1:8b LLM run1 (500)'。"""
-    model = detect_model(exp_dir.name)
-    planner_type = "Saez" if "saez" in exp_dir.name.lower() else "LLM"
-    run = "run2" if "run2" in exp_dir.name else "run1"
+    """圖例標籤：'agent=X | planner=Y | runN (n步)'。"""
+    meta = load_meta(exp_dir)
+    run = _run_tag(exp_dir.name)
     steps_csv = exp_dir / "step_metrics.csv"
     if steps_csv.exists():
         with open(steps_csv, "r") as f:
             n = sum(1 for _ in f) - 1
     else:
         n = "?"
-    return f"{model} {planner_type} {run} ({n}步)"
+    planner_display = "Saez" if meta["planner_model"] == "saez" else meta["planner_model"]
+    return f"agent={meta['agent_model']} | planner={planner_display} | {run} ({n}步)"
 
 
 def model_color(exp_dir: Path) -> str:
-    return MODEL_COLORS.get(detect_model(exp_dir.name), "#888888")
+    meta = load_meta(exp_dir)
+    return _assign_combo_color(meta["agent_model"], meta["planner_model"])
 
 
 def model_linestyle(exp_dir: Path) -> str:
-    return "-"
+    return RUN_LINESTYLES.get(_run_tag(exp_dir.name), "-")
 
 
 def model_marker(exp_dir: Path) -> str:
-    if "saez" in exp_dir.name.lower():
-        return RUN_MARKERS["saez"]
-    return RUN_MARKERS["run2"] if "run2" in exp_dir.name else RUN_MARKERS["run1"]
+    meta = load_meta(exp_dir)
+    return PLANNER_MARKERS.get(meta["planner_backend"], "o")
+
+
+def preload_combo_colors(experiments: list[Path]) -> None:
+    """預掃實驗，依 (agent_model, planner_model) 排序分派顏色，確保跨執行穩定。
+
+    Saez 組合優先（固定灰）、其餘按字典序。同一份實驗集每次跑得到相同顏色。
+    """
+    combos: set[tuple[str, str]] = set()
+    for exp in experiments:
+        m = load_meta(exp)
+        combos.add((m["agent_model"], m["planner_model"]))
+    saez_combos = sorted(c for c in combos if c[1] == "saez")
+    other_combos = sorted(c for c in combos if c[1] != "saez")
+    for combo in saez_combos + other_combos:
+        _assign_combo_color(*combo)
 
 
 def discover_experiments(base: Path, min_steps: int = 400) -> list[Path]:
@@ -757,6 +903,13 @@ def main() -> None:
     print(f"Found {len(experiments)} experiments:")
     for e in experiments:
         print(f"  - {e.relative_to(base)}")
+
+    # 預分配 (agent, planner) combo 顏色，確保跨執行穩定
+    preload_combo_colors(experiments)
+    print("\nColor assignments:")
+    for (agent_m, planner_m), color in _COMBO_COLOR_CACHE.items():
+        planner_disp = "Saez" if planner_m == "saez" else planner_m
+        print(f"  {color}  agent={agent_m} | planner={planner_disp}")
 
     # A 組：跨實驗比較
     comp_dir = ensure_dir(base / "comparison_charts")
