@@ -44,7 +44,7 @@ llm:
 #
 llm_planner:
   backend: "openai"
-  model: "gpt-4o-mini"
+  model: "gpt-5.4-mini"
   base_url: "https://api.openai.com/v1"
   api_key: ""
   max_retries: 3

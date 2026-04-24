@@ -53,26 +53,27 @@ AGENT_MARKERS = {0: "o", 1: "s", 2: "^", 3: "D"}
 #   • 色 = (agent_model, planner_model) 組合；不同組合自動分派不同顏色
 #   • 線型 = run 編號（run1 實線 / run2 虛線 / run3 點線）
 #   • 符號 = planner backend（openai 圓 / ollama 方 / saez 星）
-#   • Saez（rule-based）固定深灰，與 LLM planner 視覺區隔
+#   • Saez（rule-based）仍用獨立 marker，但顏色依 combo 分配，
+#     避免不同 Saez baseline 疊成同一種顏色而難以區分
 #   • 相同 combo 在多次執行間色彩穩定（靠 preload_combo_colors 預排序分派）
 #
-# 色盲友善調色盤（Okabe-Ito 擴充 + tab10），高對比、適合論文列印
+# 色盲友善高對比調色盤。
+# 避免同時放入兩個相近藍色（如深藍 / 天藍）與過淡黃色，
+# 讓 comparison charts 上的不同 model combo 更容易區分。
 PALETTE: list[str] = [
     "#0072B2",  # 藍
     "#D55E00",  # 朱紅
     "#009E73",  # 綠
     "#CC79A7",  # 洋紅
-    "#E69F00",  # 橘
-    "#56B4E9",  # 天藍
-    "#F0E442",  # 黃
-    "#8c564b",  # 棕
-    "#9467bd",  # 紫
-    "#17becf",  # 青
-    "#bcbd22",  # 橄欖
-    "#e377c2",  # 粉
+    "#8C564B",  # 棕
+    "#9467BD",  # 紫
+    "#BCBD22",  # 橄欖
+    "#17BECF",  # 青
+    "#E41A1C",  # 紅
+    "#4DAF4A",  # 亮綠
+    "#984EA3",  # 深紫
+    "#FF7F00",  # 深橘
 ]
-SAEZ_COLOR: str = "#444444"
-
 # planner backend → 符號；未命中回落 "o"
 PLANNER_MARKERS: dict[str, str] = {
     "openai": "o",
@@ -92,15 +93,11 @@ _COMBO_COLOR_CACHE: dict[tuple[str, str], str] = {}
 
 
 def _assign_combo_color(agent_model: str, planner_model: str) -> str:
-    """分派或取回 combo 顏色。Saez 固定；其他依登記順序從 PALETTE 取。"""
+    """分派或取回 combo 顏色，依 (agent_model, planner_model) 唯一決定。"""
     key = (agent_model, planner_model)
     if key in _COMBO_COLOR_CACHE:
         return _COMBO_COLOR_CACHE[key]
-    if planner_model == "saez":
-        _COMBO_COLOR_CACHE[key] = SAEZ_COLOR
-        return SAEZ_COLOR
-    non_saez_count = sum(1 for p in _COMBO_COLOR_CACHE.values() if p != SAEZ_COLOR)
-    color = PALETTE[non_saez_count % len(PALETTE)]
+    color = PALETTE[len(_COMBO_COLOR_CACHE) % len(PALETTE)]
     _COMBO_COLOR_CACHE[key] = color
     return color
 
@@ -252,15 +249,14 @@ def model_marker(exp_dir: Path) -> str:
 def preload_combo_colors(experiments: list[Path]) -> None:
     """預掃實驗，依 (agent_model, planner_model) 排序分派顏色，確保跨執行穩定。
 
-    Saez 組合優先（固定灰）、其餘按字典序。同一份實驗集每次跑得到相同顏色。
+    所有 combo 一律按字典序分派顏色；Saez 是否為 baseline 交給 marker 區分。
+    同一份實驗集每次跑得到相同顏色。
     """
     combos: set[tuple[str, str]] = set()
     for exp in experiments:
         m = load_meta(exp)
         combos.add((m["agent_model"], m["planner_model"]))
-    saez_combos = sorted(c for c in combos if c[1] == "saez")
-    other_combos = sorted(c for c in combos if c[1] != "saez")
-    for combo in saez_combos + other_combos:
+    for combo in sorted(combos):
         _assign_combo_color(*combo)
 
 
