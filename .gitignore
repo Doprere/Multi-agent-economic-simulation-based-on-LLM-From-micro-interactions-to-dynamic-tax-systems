@@ -31,6 +31,7 @@ thesis/
 # ── Claude Code internal (CLAUDE.md, memory, etc.) ──
 .claude/
 CLAUDE.md
+AGENTS.md
 
 # ── Virtual environment ──
 venv/
