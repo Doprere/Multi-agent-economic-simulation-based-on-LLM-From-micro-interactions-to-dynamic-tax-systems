@@ -1,15 +1,12 @@
-"""
-run_experiment.py — Overnight batch experiment runner.
+"""Overnight batch experiment runner.
 
 Usage:
-    python run_experiment.py              # Run all experiments
-    python run_experiment.py --dry-run    # Quick test (5 steps, 1 run each)
+    python run_experiment.py              # Run all configured experiments
+    python run_experiment.py --dry-run    # Quick test: 5 steps, 1 run each
 
-Each experiment entry supports asymmetric Planner / Agents backends:
-    - agent_backend / agent_model                 (required)
-    - planner_backend / planner_model             (optional; fallback: share agent client)
-
-Delegates subprocess execution to run_simulation.py.
+This batch is configured for the main thesis experiments:
+    - 100 runs: gemma4:e2b agents + gpt-5.4-mini planner
+    - 100 runs: gemma4:e2b agents + Saez planner
 """
 from __future__ import annotations
 
@@ -21,26 +18,28 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+
 EXPERIMENTS: list[dict] = [
     {
-        "name": "expC",
-        "agent_backend":   "ollama",
-        "agent_model":     "llama3.1:8b",
+        "name": "main_gpt54mini",
+        "script": "run_simulation",
+        "agent_backend": "ollama",
+        "agent_model": "gemma4:e2b",
         "planner_backend": "openai",
-        "planner_model":   "gpt-4o-mini",
+        "planner_model": "gpt-5.4-mini",
         "steps": 1000,
-        "runs": 1,
-        "label": "Experiment C: Planner=gpt-4o-mini / Agents=llama3.1:8b — 1000 steps",
+        "runs": 100,
+        "label": "Main planner: Planner=gpt-5.4-mini / Agents=gemma4:e2b",
     },
     {
-        "name": "expG",
-        "agent_backend":   "ollama",
-        "agent_model":     "gemma4:e2b",
-        "planner_backend": "openai",
-        "planner_model":   "gpt-4o-mini",
+        "name": "main_saez",
+        "script": "saez_simulation",
+        "agent_backend": "ollama",
+        "agent_model": "gemma4:e2b",
+        "planner_model": "saez",
         "steps": 1000,
-        "runs": 1,
-        "label": "Experiment G: Planner=gpt-4o-mini / Agents=gemma4:e2b — 1000 steps",
+        "runs": 100,
+        "label": "Main Saez baseline: Planner=Saez / Agents=gemma4:e2b",
     },
 ]
 
@@ -53,6 +52,7 @@ def timestamp() -> str:
 
 def check_ollama(url: str) -> bool:
     import urllib.request
+
     try:
         with urllib.request.urlopen(f"{url}/api/tags", timeout=5):
             return True
@@ -66,42 +66,75 @@ def _sanitize(s: str) -> str:
 
 def _build_run_name(exp: dict, i: int) -> str:
     agent_tag = _sanitize(exp["agent_model"])
-    planner_model = exp.get("planner_model")
-    if planner_model and planner_model != exp["agent_model"]:
-        planner_tag = _sanitize(planner_model)
-        return f"{exp['name']}_planner_{planner_tag}_agent_{agent_tag}_run{i}"
-    return f"{exp['name']}_{agent_tag}_run{i}"
+    planner_tag = _sanitize(exp.get("planner_model", exp["agent_model"]))
+    return f"{exp['name']}_planner_{planner_tag}_agent_{agent_tag}_run{i}"
+
+
+def _build_command(
+    exp: dict,
+    steps: int,
+    dry_run: bool,
+    run_name: str,
+    ollama_url: str,
+    script_dir: Path,
+    output_dir: Path,
+) -> list[str]:
+    script = exp.get("script", "run_simulation")
+
+    if script == "saez_simulation":
+        cmd = [
+            sys.executable,
+            str(script_dir / "saez_simulation.py"),
+            "--steps",
+            str(steps),
+            "--model",
+            exp["agent_model"],
+            "--run-name",
+            run_name,
+            "--output-dir",
+            str(output_dir),
+        ]
+    elif script == "run_simulation":
+        cmd = [
+            sys.executable,
+            str(script_dir / "run_simulation.py"),
+            "--steps",
+            str(steps),
+            "--agent-backend",
+            exp["agent_backend"],
+            "--agent-model",
+            exp["agent_model"],
+            "--run-name",
+            run_name,
+            "--output-dir",
+            str(output_dir),
+        ]
+        if exp.get("planner_backend"):
+            cmd += ["--planner-backend", exp["planner_backend"]]
+        if exp.get("planner_model"):
+            cmd += ["--planner-model", exp["planner_model"]]
+    else:
+        raise ValueError(f"Unknown experiment script: {script}")
+
+    needs_ollama = exp["agent_backend"] == "ollama" or exp.get("planner_backend") == "ollama"
+    if needs_ollama:
+        cmd += ["--ollama-url", ollama_url]
+    if dry_run:
+        cmd += ["--dry-run"]
+
+    return cmd
 
 
 def run_single(
     exp: dict,
     steps: int,
+    dry_run: bool,
     run_name: str,
     ollama_url: str,
     script_dir: Path,
     output_dir: Path,
 ) -> int:
-    cmd = [
-        sys.executable,
-        str(script_dir / "run_simulation.py"),
-        "--steps", str(steps),
-        "--agent-backend", exp["agent_backend"],
-        "--agent-model",   exp["agent_model"],
-        "--run-name", run_name,
-        "--output-dir", str(output_dir),
-    ]
-
-    if exp.get("planner_backend"):
-        cmd += ["--planner-backend", exp["planner_backend"]]
-    if exp.get("planner_model"):
-        cmd += ["--planner-model", exp["planner_model"]]
-
-    needs_ollama = (
-        exp["agent_backend"] == "ollama" or exp.get("planner_backend") == "ollama"
-    )
-    if needs_ollama:
-        cmd += ["--ollama-url", ollama_url]
-
+    cmd = _build_command(exp, steps, dry_run, run_name, ollama_url, script_dir, output_dir)
     print(f"  $ {' '.join(cmd)}")
     print()
     proc = subprocess.Popen(cmd, cwd=str(script_dir), stdout=sys.stdout, stderr=sys.stderr)
@@ -124,7 +157,7 @@ def _needs_openai(experiments: list[dict]) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Overnight experiment runner")
+    parser = argparse.ArgumentParser(description="Sequential overnight experiment runner")
     parser.add_argument("--dry-run", action="store_true", help="5 steps, 1 run per experiment")
     parser.add_argument("--ollama-url", default=OLLAMA_URL)
     args = parser.parse_args()
@@ -142,13 +175,13 @@ def main() -> None:
     print("=" * 60)
     print()
 
-    if _needs_ollama(EXPERIMENTS):
+    if not args.dry_run and _needs_ollama(EXPERIMENTS):
         if not check_ollama(args.ollama_url):
             print(f"[ERROR] Ollama not reachable at {args.ollama_url}")
             sys.exit(1)
         print(f"[OK] Ollama is running at {args.ollama_url}")
 
-    if _needs_openai(EXPERIMENTS):
+    if not args.dry_run and _needs_openai(EXPERIMENTS):
         if not os.environ.get("OPENAI_API_KEY"):
             print("[ERROR] OPENAI_API_KEY not set in environment")
             sys.exit(1)
@@ -172,7 +205,7 @@ def main() -> None:
             print(f"\n--- Run {i}/{runs} | {run_name} | {timestamp()} ---")
 
             t0 = time.time()
-            rc = run_single(exp, steps, run_name, args.ollama_url, script_dir, output_dir)
+            rc = run_single(exp, steps, args.dry_run, run_name, args.ollama_url, script_dir, output_dir)
             elapsed = time.strftime("%H:%M:%S", time.gmtime(time.time() - t0))
 
             tag = "OK" if rc == 0 else f"FAIL (exit {rc})"

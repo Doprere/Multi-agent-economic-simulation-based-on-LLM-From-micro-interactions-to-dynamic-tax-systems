@@ -299,11 +299,9 @@ class ObsTranslator:
         agent_lines = []
         for a in agents:
             inv   = a.inventory
-            labor = a.endogenous.get("Labor", 0.0)
             agent_lines.append(
                 f"  Agent {a.idx}: Coin={inv.get('Coin',0):.1f}, "
-                f"Wood={inv.get('Wood',0)}, Stone={inv.get('Stone',0)}, "
-                f"Labor={labor:.1f}"
+                f"Wood={inv.get('Wood',0)}, Stone={inv.get('Stone',0)}"
             )
 
         tax_info = _get_current_tax_info(env)
