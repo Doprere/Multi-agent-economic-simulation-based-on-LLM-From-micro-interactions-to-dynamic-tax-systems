@@ -1,4 +1,4 @@
-"""Overnight batch experiment runner.
+"""Pair-wise parallel batch experiment runner.
 
 Usage:
     python run_experiment.py              # Run all configured experiments
@@ -7,6 +7,9 @@ Usage:
 This batch is configured for the main thesis experiments:
     - 100 runs: gemma4:e2b agents + gpt-5.4-mini planner
     - 100 runs: gemma4:e2b agents + Saez planner
+
+Runs are launched pair-wise: run i for each experiment starts in parallel,
+then the runner waits for both to finish before launching run i+1.
 """
 from __future__ import annotations
 
@@ -125,21 +128,56 @@ def _build_command(
     return cmd
 
 
-def run_single(
+def _format_elapsed(seconds: float) -> str:
+    return time.strftime("%H:%M:%S", time.gmtime(seconds))
+
+
+def _runs_for(exp: dict, dry_run: bool) -> int:
+    return 1 if dry_run else int(exp["runs"])
+
+
+def _steps_for(exp: dict, dry_run: bool) -> int:
+    return 5 if dry_run else int(exp["steps"])
+
+
+def start_single(
     exp: dict,
+    run_index: int,
     steps: int,
     dry_run: bool,
-    run_name: str,
     ollama_url: str,
     script_dir: Path,
     output_dir: Path,
-) -> int:
+    log_dir: Path,
+) -> dict:
+    run_name = _build_run_name(exp, run_index)
     cmd = _build_command(exp, steps, dry_run, run_name, ollama_url, script_dir, output_dir)
-    print(f"  $ {' '.join(cmd)}")
-    print()
-    proc = subprocess.Popen(cmd, cwd=str(script_dir), stdout=sys.stdout, stderr=sys.stderr)
-    proc.wait()
-    return proc.returncode
+    log_path = log_dir / f"{run_name}.log"
+    log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+    log_file.write(f"$ {' '.join(cmd)}\n\n")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(script_dir),
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return {
+        "exp": exp,
+        "run_name": run_name,
+        "cmd": cmd,
+        "proc": proc,
+        "log_file": log_file,
+        "log_path": log_path,
+        "started_at": time.time(),
+    }
+
+
+def wait_single(job: dict) -> tuple[str, int, str, Path]:
+    rc = job["proc"].wait()
+    elapsed = _format_elapsed(time.time() - job["started_at"])
+    job["log_file"].close()
+    return job["run_name"], rc, elapsed, job["log_path"]
 
 
 def _needs_ollama(experiments: list[dict]) -> bool:
@@ -157,7 +195,7 @@ def _needs_openai(experiments: list[dict]) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sequential overnight experiment runner")
+    parser = argparse.ArgumentParser(description="Pair-wise parallel overnight experiment runner")
     parser.add_argument("--dry-run", action="store_true", help="5 steps, 1 run per experiment")
     parser.add_argument("--ollama-url", default=OLLAMA_URL)
     args = parser.parse_args()
@@ -165,6 +203,8 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     batch_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = script_dir / "simulation_results" / batch_ts
+    log_dir = output_dir / "_batch_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
     print("  AI Economist - Overnight Experiment Runner")
@@ -191,25 +231,41 @@ def main() -> None:
 
     results: list[tuple[str, int]] = []
     total_start = time.time()
+    total_runs = max(_runs_for(exp, args.dry_run) for exp in EXPERIMENTS)
 
+    print("=" * 60)
+    print("  Experiment plan")
+    print("=" * 60)
     for exp in EXPERIMENTS:
-        runs = 1 if args.dry_run else exp["runs"]
-        steps = 5 if args.dry_run else exp["steps"]
+        print(f"  {exp['label']}  |  {_steps_for(exp, args.dry_run)} steps x {_runs_for(exp, args.dry_run)} runs")
+    print(f"  Batch logs: {log_dir}")
+    print("=" * 60)
 
-        print("=" * 60)
-        print(f"  {exp['label']}  |  {steps} steps x {runs} runs")
-        print("=" * 60)
+    for i in range(1, total_runs + 1):
+        active_exps = [exp for exp in EXPERIMENTS if i <= _runs_for(exp, args.dry_run)]
+        print(f"\n=== Pair {i}/{total_runs} | launching {len(active_exps)} run(s) | {timestamp()} ===")
 
-        for i in range(1, runs + 1):
-            run_name = _build_run_name(exp, i)
-            print(f"\n--- Run {i}/{runs} | {run_name} | {timestamp()} ---")
+        jobs = []
+        for exp in active_exps:
+            steps = _steps_for(exp, args.dry_run)
+            job = start_single(
+                exp=exp,
+                run_index=i,
+                steps=steps,
+                dry_run=args.dry_run,
+                ollama_url=args.ollama_url,
+                script_dir=script_dir,
+                output_dir=output_dir,
+                log_dir=log_dir,
+            )
+            jobs.append(job)
+            print(f"  [START] {job['run_name']}")
+            print(f"          log: {job['log_path']}")
 
-            t0 = time.time()
-            rc = run_single(exp, steps, args.dry_run, run_name, args.ollama_url, script_dir, output_dir)
-            elapsed = time.strftime("%H:%M:%S", time.gmtime(time.time() - t0))
-
+        for job in jobs:
+            run_name, rc, elapsed, log_path = wait_single(job)
             tag = "OK" if rc == 0 else f"FAIL (exit {rc})"
-            print(f"\n--- {tag} | elapsed {elapsed} | {timestamp()} ---\n")
+            print(f"  [{tag}] {run_name} | elapsed {elapsed} | log: {log_path}")
             results.append((run_name, rc))
 
     total_str = time.strftime("%H:%M:%S", time.gmtime(time.time() - total_start))
