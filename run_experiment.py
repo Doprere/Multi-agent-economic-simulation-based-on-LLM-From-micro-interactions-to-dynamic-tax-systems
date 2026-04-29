@@ -5,7 +5,7 @@ Usage:
     python run_experiment.py --dry-run    # Quick test: 5 steps, 1 run each
 
 This batch is configured for the main thesis experiments:
-    - 100 runs: gemma4:e2b agents + gpt-5.4-mini planner
+    - 100 runs: gemma4:e2b agents + gpt-4o-mini planner
     - 100 runs: gemma4:e2b agents + Saez planner
 
 Runs are launched pair-wise: run i for each experiment starts in parallel,
@@ -24,15 +24,15 @@ from pathlib import Path
 
 EXPERIMENTS: list[dict] = [
     {
-        "name": "main_gpt54mini",
+        "name": "main_gpt4omini",
         "script": "run_simulation",
         "agent_backend": "ollama",
         "agent_model": "gemma4:e2b",
         "planner_backend": "openai",
-        "planner_model": "gpt-5.4-mini",
+        "planner_model": "gpt-4o-mini",
         "steps": 1000,
         "runs": 100,
-        "label": "Main planner: Planner=gpt-5.4-mini / Agents=gemma4:e2b",
+        "label": "Main planner: Planner=gpt-4o-mini / Agents=gemma4:e2b",
     },
     {
         "name": "main_saez",
