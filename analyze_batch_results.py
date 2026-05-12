@@ -723,6 +723,7 @@ def create_group_level_outputs(
     run_df: pd.DataFrame,
     out_dir: Path,
     bootstrap_iterations: int,
+    batch_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     analysis_df = run_df[run_df["analysis_ready"]].copy()
     rng = np.random.default_rng(BOOTSTRAP_SEED)
@@ -811,6 +812,7 @@ def create_group_level_outputs(
     tests.to_csv(out_dir / "statistical_tests.csv", index=False, encoding="utf-8-sig")
     write_group_methods(out_dir, bootstrap_iterations)
     create_stage2_figures(analysis_df, out_dir)
+    create_time_series_figures(analysis_df, batch_dir, out_dir)
     return group_summary, tests
 
 
@@ -1139,6 +1141,221 @@ def create_metric_family_figures(
         plt.close(fig)
 
 
+def bootstrap_ci_for_matrix(
+    values: np.ndarray,
+    rng: np.random.Generator,
+    iterations: int = 2000,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bootstrap CI for the mean trajectory across runs."""
+    if values.size == 0:
+        return np.array([]), np.array([])
+    n_runs = values.shape[0]
+    idx = rng.integers(0, n_runs, size=(iterations, n_runs))
+    sampled_means = values[idx].mean(axis=1)
+    lo = np.quantile(sampled_means, 0.025, axis=0)
+    hi = np.quantile(sampled_means, 0.975, axis=0)
+    return lo, hi
+
+
+def load_time_series_for_group(
+    run_df: pd.DataFrame,
+    batch_dir: Path,
+    group: str,
+    metric: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    rows: list[np.ndarray] = []
+    steps: np.ndarray | None = None
+    for _, run in run_df[run_df["group"] == group].sort_values("run_num").iterrows():
+        step_path = batch_dir / str(run["run_name"]) / "step_metrics.csv"
+        if not step_path.exists():
+            continue
+        df = pd.read_csv(step_path)
+        if metric not in df.columns or "step" not in df.columns:
+            continue
+        metric_values = pd.to_numeric(df[metric], errors="coerce")
+        if metric_values.isna().any():
+            continue
+        current_steps = pd.to_numeric(df["step"], errors="coerce").to_numpy(dtype=int)
+        if steps is None:
+            steps = current_steps
+        if len(current_steps) != len(steps) or np.any(current_steps != steps):
+            continue
+        rows.append(metric_values.to_numpy(dtype=float))
+    if steps is None or not rows:
+        return np.array([]), np.array([])
+    return steps, np.vstack(rows)
+
+
+def load_cumulative_build_series_for_group(
+    run_df: pd.DataFrame,
+    batch_dir: Path,
+    group: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    rows: list[np.ndarray] = []
+    steps: np.ndarray | None = None
+    for _, run in run_df[run_df["group"] == group].sort_values("run_num").iterrows():
+        step_path = batch_dir / str(run["run_name"]) / "step_metrics.csv"
+        if not step_path.exists():
+            continue
+        df = pd.read_csv(step_path)
+        if "build_total" not in df.columns or "step" not in df.columns:
+            continue
+        current_steps = pd.to_numeric(df["step"], errors="coerce").to_numpy(dtype=int)
+        if steps is None:
+            steps = current_steps
+        if len(current_steps) != len(steps) or np.any(current_steps != steps):
+            continue
+        rows.append(pd.to_numeric(df["build_total"], errors="coerce").fillna(0).cumsum().to_numpy(dtype=float))
+    if steps is None or not rows:
+        return np.array([]), np.array([])
+    return steps, np.vstack(rows)
+
+
+def load_action_share_series_for_group(
+    run_df: pd.DataFrame,
+    batch_dir: Path,
+    group: str,
+    category: str,
+    window: int = 50,
+) -> tuple[np.ndarray, np.ndarray]:
+    category_ranges = {
+        "noop": lambda s: s == 0,
+        "build": lambda s: s == 1,
+        "order": lambda s: (s >= 2) & (s <= 45),
+        "move": lambda s: (s >= 46) & (s <= 49),
+    }
+    rows: list[np.ndarray] = []
+    steps: np.ndarray | None = None
+    predicate = category_ranges[category]
+    for _, run in run_df[run_df["group"] == group].sort_values("run_num").iterrows():
+        action_path = batch_dir / str(run["run_name"]) / "action_log.csv"
+        if not action_path.exists():
+            continue
+        df = pd.read_csv(action_path)
+        action_cols = [c for c in df.columns if c.startswith("action_agent_")]
+        if not action_cols or "step" not in df.columns:
+            continue
+        current_steps = pd.to_numeric(df["step"], errors="coerce").to_numpy(dtype=int)
+        if steps is None:
+            steps = current_steps
+        if len(current_steps) != len(steps) or np.any(current_steps != steps):
+            continue
+        actions = df[action_cols].apply(pd.to_numeric, errors="coerce")
+        share = predicate(actions).mean(axis=1).rolling(window=window, min_periods=1).mean()
+        rows.append(share.to_numpy(dtype=float))
+    if steps is None or not rows:
+        return np.array([]), np.array([])
+    return steps, np.vstack(rows)
+
+
+def plot_group_trajectory(
+    ax: plt.Axes,
+    steps: np.ndarray,
+    values_by_group: dict[str, np.ndarray],
+    title: str,
+    ylabel: str,
+    colors: dict[str, str],
+    labels: dict[str, str],
+) -> None:
+    rng = np.random.default_rng(BOOTSTRAP_SEED)
+    for group in COMPARISON_GROUPS:
+        values = values_by_group.get(group)
+        if values is None or values.size == 0:
+            continue
+        mean = values.mean(axis=0)
+        lo, hi = bootstrap_ci_for_matrix(values, rng)
+        ax.plot(steps, mean, color=colors[group], linewidth=1.8, label=labels[group])
+        if len(lo):
+            ax.fill_between(steps, lo, hi, color=colors[group], alpha=0.18, linewidth=0)
+        ax.scatter([steps[-1]], [mean[-1]], color=colors[group], s=28, zorder=3)
+    ax.set_title(title)
+    ax.set_xlabel("Step")
+    ax.set_ylabel(ylabel)
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False)
+
+
+def create_time_series_figures(
+    run_df: pd.DataFrame,
+    batch_dir: Path,
+    out_dir: Path,
+) -> None:
+    figure_dir = out_dir / "figures" / "time_series"
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    colors = {"gpt4omini": "#0072B2", "saez": "#D55E00"}
+    labels = {"gpt4omini": "GPT-4o-mini Planner", "saez": "Saez Baseline"}
+
+    metric_families = {
+        "time_series_inequality": [
+            ("gini", "Gini Over Time", "Gini"),
+        ],
+        "time_series_productivity": [
+            ("mean_coin", "Mean Coin Over Time", "Mean Coin"),
+            ("cumulative_builds", "Cumulative Builds Over Time", "Completed Builds"),
+        ],
+        "time_series_welfare": [
+            ("swf_absolute", "Absolute SWF Over Time", "SWF"),
+            ("cumulative_planner_reward", "Cumulative SWF Gain Over Time", "Cumulative SWF Gain"),
+        ],
+    }
+
+    for family_name, metrics in metric_families.items():
+        fig, axes = plt.subplots(1, len(metrics), figsize=(6.2 * len(metrics), 4.4), squeeze=False)
+        for ax, (metric, title, ylabel) in zip(axes.ravel(), metrics):
+            values_by_group: dict[str, np.ndarray] = {}
+            steps = np.array([])
+            for group in COMPARISON_GROUPS:
+                if metric == "cumulative_builds":
+                    group_steps, group_values = load_cumulative_build_series_for_group(run_df, batch_dir, group)
+                else:
+                    group_steps, group_values = load_time_series_for_group(run_df, batch_dir, group, metric)
+                if len(group_steps):
+                    steps = group_steps
+                values_by_group[group] = group_values
+            if len(steps):
+                plot_group_trajectory(ax, steps, values_by_group, title, ylabel, colors, labels)
+            else:
+                ax.set_title(f"{title} (missing)")
+        fig.tight_layout()
+        fig.savefig(figure_dir / f"{family_name}.png", dpi=200)
+        fig.savefig(figure_dir / f"{family_name}.svg")
+        plt.close(fig)
+
+    behavior_categories = [
+        ("noop", "NOOP Share"),
+        ("build", "Build Share"),
+        ("order", "Order Share"),
+        ("move", "Move Share"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8), squeeze=False)
+    for ax, (category, title) in zip(axes.ravel(), behavior_categories):
+        values_by_group = {}
+        steps = np.array([])
+        for group in COMPARISON_GROUPS:
+            group_steps, group_values = load_action_share_series_for_group(
+                run_df, batch_dir, group, category
+            )
+            if len(group_steps):
+                steps = group_steps
+            values_by_group[group] = group_values
+        if len(steps):
+            plot_group_trajectory(
+                ax,
+                steps,
+                values_by_group,
+                f"{title} Over Time (50-step rolling mean)",
+                title,
+                colors,
+                labels,
+            )
+        else:
+            ax.set_title(f"{title} (missing)")
+    fig.tight_layout()
+    fig.savefig(figure_dir / "time_series_behavior.png", dpi=200)
+    fig.savefig(figure_dir / "time_series_behavior.svg")
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     batch = args.batch
@@ -1154,7 +1371,7 @@ def main() -> None:
     out_csv = out_dir / "run_level_summary.csv"
     df.to_csv(out_csv, index=False, encoding="utf-8-sig")
     group_summary, tests = create_group_level_outputs(
-        df, out_dir, args.bootstrap_iterations
+        df, out_dir, args.bootstrap_iterations, batch
     )
 
     manifest = {
