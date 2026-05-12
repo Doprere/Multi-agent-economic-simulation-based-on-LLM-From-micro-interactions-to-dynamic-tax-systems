@@ -1294,7 +1294,7 @@ def create_time_series_figures(
             ("cumulative_builds", "Cumulative Builds Over Time", "Completed Builds"),
         ],
         "time_series_welfare": [
-            ("swf_absolute", "Absolute SWF Over Time", "SWF"),
+            ("swf_absolute", "Social Welfare Over Time", "Social Welfare"),
             ("cumulative_planner_reward", "Cumulative SWF Gain Over Time", "Cumulative SWF Gain"),
         ],
     }
