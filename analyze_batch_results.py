@@ -59,6 +59,21 @@ PRIMARY_METRICS = [
     "mean_tax_action_value",
     "tax_action_volatility",
 ]
+ROBUSTNESS_METRICS = [
+    "mean_gini",
+    "gini_auc_per_step",
+    "final_gini",
+    "mean_coin_over_time",
+    "final_mean_coin",
+    "completed_build_count",
+    "mean_swf_absolute",
+    "final_swf_absolute",
+    "cumulative_planner_reward",
+    "noop_action_share",
+    "build_action_share",
+    "order_action_share",
+    "move_action_share",
+]
 COMPARISON_GROUPS = ("gpt4omini", "saez")
 BOOTSTRAP_ITERATIONS = 10_000
 BOOTSTRAP_SEED = 20260512
@@ -640,6 +655,24 @@ def bootstrap_diff_ci(
     return float(lo), float(hi)
 
 
+def bootstrap_median_diff_ci(
+    a: pd.Series,
+    b: pd.Series,
+    iterations: int,
+    rng: np.random.Generator,
+    alpha: float = 0.05,
+) -> tuple[float | None, float | None]:
+    arr_a = pd.to_numeric(a, errors="coerce").dropna().to_numpy(dtype=float)
+    arr_b = pd.to_numeric(b, errors="coerce").dropna().to_numpy(dtype=float)
+    if len(arr_a) == 0 or len(arr_b) == 0:
+        return None, None
+    idx_a = rng.integers(0, len(arr_a), size=(iterations, len(arr_a)))
+    idx_b = rng.integers(0, len(arr_b), size=(iterations, len(arr_b)))
+    diffs = np.median(arr_a[idx_a], axis=1) - np.median(arr_b[idx_b], axis=1)
+    lo, hi = np.quantile(diffs, [alpha / 2, 1 - alpha / 2])
+    return float(lo), float(hi)
+
+
 def normal_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
@@ -824,6 +857,7 @@ def create_group_level_outputs(
     write_group_methods(out_dir, bootstrap_iterations)
     create_stage2_figures(analysis_df, out_dir)
     create_time_series_figures(analysis_df, batch_dir, out_dir)
+    create_robustness_outputs(run_df, out_dir, bootstrap_iterations)
     return group_summary, tests
 
 
@@ -1367,6 +1401,342 @@ def create_time_series_figures(
     plt.close(fig)
 
 
+def add_quality_event_count(run_df: pd.DataFrame) -> pd.DataFrame:
+    df = run_df.copy()
+    quality_cols = ["fallback_count", "illegal_action_warning_count"]
+    for col in quality_cols:
+        if col not in df.columns:
+            df[col] = 0
+    df["quality_event_count"] = (
+        pd.to_numeric(df["fallback_count"], errors="coerce").fillna(0)
+        + pd.to_numeric(df["illegal_action_warning_count"], errors="coerce").fillna(0)
+    )
+    return df
+
+
+def filter_top_quality_tail(
+    run_df: pd.DataFrame,
+    quality_col: str,
+    quantile: float = 0.95,
+) -> pd.DataFrame:
+    keep = pd.Series(False, index=run_df.index)
+    for group in COMPARISON_GROUPS:
+        group_mask = run_df["group"] == group
+        values = pd.to_numeric(run_df.loc[group_mask, quality_col], errors="coerce")
+        threshold = values.quantile(quantile)
+        keep.loc[group_mask] = values <= threshold
+    return run_df.loc[keep].copy()
+
+
+def winsorize_metric_by_group(
+    run_df: pd.DataFrame,
+    metric: str,
+    lower: float = 0.05,
+    upper: float = 0.95,
+) -> pd.DataFrame:
+    df = run_df.copy()
+    df[metric] = pd.to_numeric(df[metric], errors="coerce").astype(float)
+    for group in COMPARISON_GROUPS:
+        mask = df["group"] == group
+        values = pd.to_numeric(df.loc[mask, metric], errors="coerce")
+        lo = values.quantile(lower)
+        hi = values.quantile(upper)
+        df.loc[mask, metric] = values.clip(lo, hi)
+    return df
+
+
+def summarize_robust_metric(
+    run_df: pd.DataFrame,
+    metric: str,
+    scenario: str,
+    estimator: str,
+    bootstrap_iterations: int,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    a = pd.to_numeric(
+        run_df.loc[run_df["group"] == COMPARISON_GROUPS[0], metric],
+        errors="coerce",
+    ).dropna()
+    b = pd.to_numeric(
+        run_df.loc[run_df["group"] == COMPARISON_GROUPS[1], metric],
+        errors="coerce",
+    ).dropna()
+    if estimator == "median":
+        estimate_a = float(a.median()) if len(a) else None
+        estimate_b = float(b.median()) if len(b) else None
+        diff = (
+            float(a.median() - b.median())
+            if len(a) and len(b)
+            else None
+        )
+        ci_lo, ci_hi = bootstrap_median_diff_ci(a, b, bootstrap_iterations, rng)
+    else:
+        estimate_a = float(a.mean()) if len(a) else None
+        estimate_b = float(b.mean()) if len(b) else None
+        diff = (
+            float(a.mean() - b.mean())
+            if len(a) and len(b)
+            else None
+        )
+        ci_lo, ci_hi = bootstrap_diff_ci(a, b, bootstrap_iterations, rng)
+    return {
+        "scenario": scenario,
+        "metric": metric,
+        "metric_label": metric_display_label(metric),
+        "estimator": estimator,
+        "n_gpt4omini": int(a.count()),
+        "n_saez": int(b.count()),
+        "estimate_gpt4omini": estimate_a,
+        "estimate_saez": estimate_b,
+        "diff_gpt4omini_minus_saez": diff,
+        "bootstrap_diff_ci_low": ci_lo,
+        "bootstrap_diff_ci_high": ci_hi,
+        "ci_excludes_zero": bool(ci_lo is not None and ci_hi is not None and (ci_lo > 0 or ci_hi < 0)),
+        "cohens_d": cohens_d(a, b),
+        "cliffs_delta": cliffs_delta(a, b),
+    }
+
+
+def create_robustness_outputs(
+    run_df: pd.DataFrame,
+    out_dir: Path,
+    bootstrap_iterations: int,
+) -> pd.DataFrame:
+    analysis_df = add_quality_event_count(run_df[run_df["analysis_ready"]].copy())
+    rng = np.random.default_rng(BOOTSTRAP_SEED)
+    scenario_builders = [
+        (
+            "main_analysis_all_runs",
+            "mean",
+            lambda metric: analysis_df,
+        ),
+        (
+            "exclude_top_5pct_fallback_within_group",
+            "mean",
+            lambda metric: filter_top_quality_tail(analysis_df, "fallback_count"),
+        ),
+        (
+            "exclude_top_5pct_illegal_actions_within_group",
+            "mean",
+            lambda metric: filter_top_quality_tail(
+                analysis_df, "illegal_action_warning_count"
+            ),
+        ),
+        (
+            "exclude_top_5pct_quality_events_within_group",
+            "mean",
+            lambda metric: filter_top_quality_tail(analysis_df, "quality_event_count"),
+        ),
+        (
+            "winsorize_metric_5_95_within_group",
+            "mean",
+            lambda metric: winsorize_metric_by_group(analysis_df, metric),
+        ),
+        (
+            "median_difference_all_runs",
+            "median",
+            lambda metric: analysis_df,
+        ),
+    ]
+    rows: list[dict[str, Any]] = []
+    available_metrics = [m for m in ROBUSTNESS_METRICS if m in analysis_df.columns]
+    for metric in available_metrics:
+        for scenario, estimator, builder in scenario_builders:
+            scenario_df = builder(metric)
+            rows.append(
+                summarize_robust_metric(
+                    scenario_df,
+                    metric,
+                    scenario,
+                    estimator,
+                    bootstrap_iterations,
+                    rng,
+                )
+            )
+    robustness = pd.DataFrame(rows)
+    if not robustness.empty:
+        baseline = robustness[
+            robustness["scenario"] == "main_analysis_all_runs"
+        ][["metric", "diff_gpt4omini_minus_saez"]].rename(
+            columns={"diff_gpt4omini_minus_saez": "baseline_diff"}
+        )
+        robustness = robustness.merge(baseline, on="metric", how="left")
+        robustness["same_direction_as_baseline"] = np.sign(
+            robustness["diff_gpt4omini_minus_saez"]
+        ) == np.sign(robustness["baseline_diff"])
+        robustness["absolute_change_from_baseline"] = (
+            robustness["diff_gpt4omini_minus_saez"] - robustness["baseline_diff"]
+        ).abs()
+    robustness.to_csv(
+        out_dir / "robustness_checks.csv", index=False, encoding="utf-8-sig"
+    )
+    write_robustness_methods(out_dir, bootstrap_iterations)
+    create_robustness_figures(analysis_df, robustness, out_dir)
+    return robustness
+
+
+def write_robustness_methods(out_dir: Path, bootstrap_iterations: int) -> None:
+    methods = f"""# Robustness Check Methods
+
+Generated: {datetime.now(timezone.utc).isoformat()}
+
+## Purpose
+
+Robustness checks test whether the main GPT-4o-mini planner versus Saez baseline differences are driven by a small number of problematic or extreme runs. They are sensitivity checks, not replacements for the main analysis.
+
+## Included Runs
+
+- The starting pool is `analysis_ready == True`.
+- No source result files are modified.
+- The main analysis remains the full 100 versus 100 run comparison.
+
+## Scenarios
+
+- `main_analysis_all_runs`: original analysis-ready sample.
+- `exclude_top_5pct_fallback_within_group`: excludes runs above each group's 95th percentile fallback count.
+- `exclude_top_5pct_illegal_actions_within_group`: excludes runs above each group's 95th percentile illegal-action warning count.
+- `exclude_top_5pct_quality_events_within_group`: excludes runs above each group's 95th percentile of fallback plus illegal-action warning count.
+- `winsorize_metric_5_95_within_group`: clips each metric within each group to its 5th and 95th percentile before comparing means.
+- `median_difference_all_runs`: compares group medians rather than group means.
+
+## Reported Statistics
+
+- `diff_gpt4omini_minus_saez` is GPT-4o-mini planner minus Saez baseline.
+- Bootstrap 95% CIs use {bootstrap_iterations} resamples with replacement and fixed random seed `{BOOTSTRAP_SEED}`.
+- `same_direction_as_baseline` checks whether each robustness scenario has the same sign as the main analysis estimate.
+- These checks assess stability of observed differences. They do not establish causal mechanisms by themselves.
+"""
+    (out_dir / "robustness_methods.md").write_text(methods, encoding="utf-8")
+
+
+def create_robustness_figures(
+    run_df: pd.DataFrame,
+    robustness: pd.DataFrame,
+    out_dir: Path,
+) -> None:
+    figure_dir = out_dir / "figures" / "robustness"
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    if robustness.empty:
+        return
+
+    stability = robustness[
+        robustness["scenario"].isin(
+            [
+                "main_analysis_all_runs",
+                "exclude_top_5pct_fallback_within_group",
+                "exclude_top_5pct_illegal_actions_within_group",
+                "exclude_top_5pct_quality_events_within_group",
+                "winsorize_metric_5_95_within_group",
+                "median_difference_all_runs",
+            ]
+        )
+    ].copy()
+    scenario_labels = {
+        "main_analysis_all_runs": "All runs",
+        "exclude_top_5pct_fallback_within_group": "Drop high fallback",
+        "exclude_top_5pct_illegal_actions_within_group": "Drop high illegal",
+        "exclude_top_5pct_quality_events_within_group": "Drop high quality events",
+        "winsorize_metric_5_95_within_group": "Winsorized 5-95%",
+        "median_difference_all_runs": "Median diff",
+    }
+    stability["scenario_label"] = stability["scenario"].map(scenario_labels)
+
+    key_metrics = [
+        "mean_gini",
+        "mean_coin_over_time",
+        "mean_swf_absolute",
+        "cumulative_planner_reward",
+        "noop_action_share",
+        "order_action_share",
+    ]
+    plot_df = stability[stability["metric"].isin(key_metrics)].copy()
+    plot_df["metric"] = pd.Categorical(plot_df["metric"], categories=key_metrics, ordered=True)
+    plot_df = plot_df.sort_values(["metric", "scenario"])
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8.5), squeeze=False)
+    for ax, metric in zip(axes.ravel(), key_metrics):
+        metric_df = plot_df[plot_df["metric"] == metric]
+        y = np.arange(len(metric_df))
+        ax.errorbar(
+            metric_df["diff_gpt4omini_minus_saez"],
+            y,
+            xerr=np.vstack(
+                [
+                    metric_df["diff_gpt4omini_minus_saez"]
+                    - metric_df["bootstrap_diff_ci_low"],
+                    metric_df["bootstrap_diff_ci_high"]
+                    - metric_df["diff_gpt4omini_minus_saez"],
+                ]
+            ),
+            fmt="o",
+            color="#333333",
+            ecolor="#777777",
+            capsize=3,
+            markersize=4,
+        )
+        ax.axvline(0, color="#B00020", linestyle="--", linewidth=1)
+        ax.set_yticks(y)
+        ax.set_yticklabels(metric_df["scenario_label"])
+        ax.set_title(metric_display_label(metric))
+        ax.grid(axis="x", alpha=0.25)
+    fig.suptitle("Robustness of Mean Differences Across Sensitivity Checks", y=1.02)
+    fig.tight_layout()
+    fig.savefig(figure_dir / "robustness_effect_stability.png", dpi=200)
+    fig.savefig(figure_dir / "robustness_effect_stability.svg")
+    plt.close(fig)
+
+    heat = stability.pivot(
+        index="metric_label",
+        columns="scenario_label",
+        values="same_direction_as_baseline",
+    )
+    heat = heat.reindex([metric_display_label(m) for m in ROBUSTNESS_METRICS if metric_display_label(m) in heat.index])
+    fig, ax = plt.subplots(figsize=(10, max(5, len(heat) * 0.32)))
+    matrix = heat.astype(float).to_numpy()
+    ax.imshow(matrix, aspect="auto", cmap="Greens", vmin=0, vmax=1)
+    ax.set_xticks(np.arange(len(heat.columns)))
+    ax.set_xticklabels(heat.columns, rotation=35, ha="right")
+    ax.set_yticks(np.arange(len(heat.index)))
+    ax.set_yticklabels(heat.index)
+    ax.set_title("Robustness Direction Check (Green = Same Sign as Main Estimate)")
+    for i in range(matrix.shape[0]):
+        for j in range(matrix.shape[1]):
+            ax.text(j, i, "same" if matrix[i, j] == 1 else "flip", ha="center", va="center", fontsize=7)
+    fig.tight_layout()
+    fig.savefig(figure_dir / "robustness_direction_heatmap.png", dpi=200)
+    fig.savefig(figure_dir / "robustness_direction_heatmap.svg")
+    plt.close(fig)
+
+    colors = {"gpt4omini": "#0072B2", "saez": "#D55E00"}
+    labels = {"gpt4omini": "GPT-4o-mini Planner", "saez": "Saez Baseline"}
+    scatter_metrics = [
+        ("mean_swf_absolute", "Mean Social Welfare"),
+        ("mean_gini", "Mean Gini"),
+        ("mean_coin_over_time", "Mean Coin Over Time"),
+    ]
+    fig, axes = plt.subplots(1, len(scatter_metrics), figsize=(5.3 * len(scatter_metrics), 4.2), squeeze=False)
+    for ax, (metric, title) in zip(axes.ravel(), scatter_metrics):
+        for group in COMPARISON_GROUPS:
+            group_df = run_df[run_df["group"] == group]
+            ax.scatter(
+                group_df["quality_event_count"],
+                group_df[metric],
+                s=22,
+                alpha=0.65,
+                color=colors[group],
+                label=labels[group],
+                edgecolors="none",
+            )
+        ax.set_title(title)
+        ax.set_xlabel("Fallback + illegal-action warnings")
+        ax.set_ylabel(metric_display_label(metric))
+        ax.grid(alpha=0.25)
+    axes.ravel()[0].legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(figure_dir / "quality_events_vs_core_outcomes.png", dpi=200)
+    fig.savefig(figure_dir / "quality_events_vs_core_outcomes.svg")
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     batch = args.batch
@@ -1401,8 +1771,12 @@ def main() -> None:
             "group_level_summary.csv",
             "group_level_methods.md",
             "statistical_tests.csv",
+            "robustness_checks.csv",
+            "robustness_methods.md",
             "figures/*.png",
             "figures/*.svg",
+            "figures/robustness/*.png",
+            "figures/robustness/*.svg",
             "analysis_manifest.json",
         ],
     }
