@@ -62,6 +62,12 @@ PRIMARY_METRICS = [
 COMPARISON_GROUPS = ("gpt4omini", "saez")
 BOOTSTRAP_ITERATIONS = 10_000
 BOOTSTRAP_SEED = 20260512
+METRIC_DISPLAY_LABELS = {
+    "final_swf_absolute": "Final Social Welfare",
+    "mean_swf_absolute": "Mean Social Welfare",
+    "swf_absolute": "Social Welfare",
+    "cumulative_planner_reward": "Cumulative SWF Gain",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,6 +101,11 @@ def infer_group(run_name: str) -> str:
     if "main_saez" in run_name:
         return "saez"
     return "unknown"
+
+
+def metric_display_label(metric: str) -> str:
+    """Human-readable label for figures while preserving raw CSV column names."""
+    return METRIC_DISPLAY_LABELS.get(metric, metric.replace("_", " ").title())
 
 
 def expected_runs_from_batch(batch: Path) -> list[str]:
@@ -861,8 +872,8 @@ def create_stage2_figures(run_df: pd.DataFrame, out_dir: Path) -> None:
         ("final_mean_coin", "Final Mean Coin"),
         ("mean_coin_over_time", "Mean Coin Over Time"),
         ("completed_build_count", "Completed Builds"),
-        ("final_swf_absolute", "Final SWF"),
-        ("mean_swf_absolute", "Mean SWF"),
+        ("final_swf_absolute", "Final Social Welfare"),
+        ("mean_swf_absolute", "Mean Social Welfare"),
         ("cumulative_planner_reward", "Cumulative SWF Gain"),
         ("coin_per_labor", "Coin Per Labor"),
         ("builds_per_labor", "Builds Per Labor"),
@@ -900,7 +911,7 @@ def create_stage2_figures(run_df: pd.DataFrame, out_dir: Path) -> None:
             jitter = rng.normal(loc=i, scale=0.035, size=len(values))
             ax.scatter(jitter, values, s=14, alpha=0.55, color=colors[group], edgecolors="none")
         ax.set_title(title)
-        ax.set_ylabel(metric)
+        ax.set_ylabel(metric_display_label(metric))
         ax.grid(axis="y", alpha=0.25)
         fig.tight_layout()
         fig.savefig(figure_dir / f"{metric}_box_jitter.png", dpi=180)
@@ -988,7 +999,7 @@ def _plot_mean_difference(
     ax.scatter(diff[significant], y[significant], color="#0072B2", s=28, zorder=3)
     ax.axvline(0, color="#B00020", linestyle="--", linewidth=1)
     ax.set_yticks(y)
-    ax.set_yticklabels([str(m).replace("_", " ") for m in tests["metric"]])
+    ax.set_yticklabels([metric_display_label(str(m)) for m in tests["metric"]])
     ax.invert_yaxis()
     ax.set_xlabel(xlabel)
     ax.set_title(title)
@@ -1011,7 +1022,7 @@ def create_standardized_effect_figure(tests: pd.DataFrame, figure_dir: Path) -> 
     ax.axvline(0.5, color="#999999", linestyle=":", linewidth=0.8)
     ax.axvline(-0.5, color="#999999", linestyle=":", linewidth=0.8)
     ax.set_yticks(y)
-    ax.set_yticklabels([str(m).replace("_", " ") for m in tests["metric"]])
+    ax.set_yticklabels([metric_display_label(str(m)) for m in tests["metric"]])
     ax.invert_yaxis()
     ax.set_xlabel("Cohen's d: GPT-4o-mini planner minus Saez baseline")
     ax.set_title("Standardized Effect Sizes Across Metrics")
@@ -1079,8 +1090,8 @@ def create_metric_family_figures(
             ("completed_build_count", "Completed Builds"),
         ],
         "welfare_metrics": [
-            ("final_swf_absolute", "Final SWF"),
-            ("mean_swf_absolute", "Mean SWF"),
+            ("final_swf_absolute", "Final Social Welfare"),
+            ("mean_swf_absolute", "Mean Social Welfare"),
             ("cumulative_planner_reward", "Cumulative SWF Gain"),
         ],
         "behavior_metrics": [
