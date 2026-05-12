@@ -927,6 +927,7 @@ def create_mean_difference_figure(out_dir: Path, figure_dir: Path) -> None:
         "coin_per_labor",
         "builds_per_labor",
         "noop_action_share",
+        "build_action_share",
         "order_action_share",
         "move_action_share",
         "fallback_count",
