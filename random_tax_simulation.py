@@ -44,6 +44,7 @@ from ai_economist import foundation
 
 from llm_agent.action_map import get_random_valid_action
 from llm_agent.agent import MobileAgentLLM, decide_batch
+from llm_agent.calibration_logger import CalibrationCSVLogger
 from llm_agent.config import load_config, make_env_config
 from llm_agent.logger import SimulationLogger, setup_logging
 from llm_agent.ollama_client import OllamaClient
@@ -84,6 +85,7 @@ async def run_episode(
     dry_run: bool = False,
     run_name: str | None = None,
     output_dir: str = "simulation_results",
+    calibration_csv: str | None = None,
 ) -> None:
     """
     執行 random-tax baseline。
@@ -125,6 +127,10 @@ async def run_episode(
 
     # ── 初始化 LLM Agent ──────────────────────────────────
     sim_logger = SimulationLogger(output_dir=output_dir, run_name=run_name)
+    calibration_logger = (
+        CalibrationCSVLogger(calibration_csv, sim_logger.run_name)
+        if calibration_csv else None
+    )
 
     ollama_client: OllamaClient | None = None
 
@@ -216,6 +222,10 @@ async def run_episode(
                 ]
                 sim_logger.log_tax(step, random_tax_rates)
 
+            if calibration_logger is not None:
+                if calibration_logger.log_completed_tax_period(step, tax_component, env):
+                    logger.info("[Calibration] period sample logged at step=%s", step)
+
             # 定期存檔（每 100 步）
             if (step + 1) % 100 == 0:
                 sim_logger.save()
@@ -284,6 +294,10 @@ def main() -> None:
         help="Ollama 模型名稱（用於 Agent）",
     )
     parser.add_argument(
+        "--calibration-csv", type=str, default=None,
+        help="Optional CSV path for completed tax-period income samples.",
+    )
+    parser.add_argument(
         "--debug", action="store_true",
         help="啟用 DEBUG 日誌",
     )
@@ -300,6 +314,7 @@ def main() -> None:
             dry_run=args.dry_run,
             run_name=args.run_name,
             output_dir=args.output_dir,
+            calibration_csv=args.calibration_csv,
         )
     )
 
