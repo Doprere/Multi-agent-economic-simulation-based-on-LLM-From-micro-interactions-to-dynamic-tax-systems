@@ -1,15 +1,18 @@
 """
-saez_simulation.py — Saez 最適稅率公式實驗腳本。
+random_tax_simulation.py - cold-start random-tax baseline runner.
 
-與 ollama_simulation.py 的差異：
-  - 不使用 LLM Planner（稅率由 Foundation 內建 Saez 公式自動計算）
-  - Agent 仍使用 Ollama LLM 做決策（llama3.1:8b）
-  - 用於比較 AI Planner vs 傳統經濟學最適稅率
+Purpose:
+  - Does not use an LLM planner.
+  - Uses the Foundation tax_model="saez" component only as the legacy
+    cold-start random tax generator.
+  - Agents still use Ollama LLM decisions; current main experiments use
+    gemma4:e2b.
+  - This is a random-tax baseline, not a calibrated Saez optimal-tax model.
 
-用法：
-    python saez_simulation.py --steps 1000 --model llama3.1:8b
-    python saez_simulation.py --steps 1000 --model llama3.1:8b --run-name saez_run1
-    python saez_simulation.py --dry-run --steps 5
+Examples:
+    python random_tax_simulation.py --steps 1000 --model gemma4:e2b
+    python random_tax_simulation.py --steps 1000 --model gemma4:e2b --run-name random_tax_run1
+    python random_tax_simulation.py --dry-run --steps 5
 """
 from __future__ import annotations
 
@@ -70,7 +73,7 @@ def _sample_random_actions(env, obs) -> dict[str, int]:
 
 
 # ──────────────────────────────────────────────────────────────
-#  主模擬迴圈（Saez 版）
+#  主模擬迴圈（random-tax baseline）
 # ──────────────────────────────────────────────────────────────
 
 async def run_episode(
@@ -83,10 +86,10 @@ async def run_episode(
     output_dir: str = "simulation_results",
 ) -> None:
     """
-    執行 Saez 公式 Planner 實驗。
+    執行 random-tax baseline。
 
     與 ollama_simulation.run_episode 的差異：
-    - tax_model="saez"，Foundation 自動計算最適稅率
+    - tax_model="saez"，但未載入 calibration buffer 時會抽 random bracket rates
     - 不實例化 PlannerLLM，planner 永遠 NOOP
     """
     # 強制重新載入 config（避免 singleton cache 問題）
@@ -95,10 +98,10 @@ async def run_episode(
     cfg = load_config(config_path)
 
     print("\n" + "=" * 60)
-    print(" AI Economist — Saez Formula Planner Experiment")
+    print(" AI Economist — Random-Tax Baseline Experiment")
     print("=" * 60)
     print(f"Agent 模型：{ollama_model} @ {ollama_url}")
-    print(f"Planner：Saez 最適稅率公式（Foundation 內建）")
+    print("Planner：random-tax baseline via Foundation cold-start tax component")
     print(f"Episode 長度：{cfg.environment.episode_length}")
     print(f"Dry-run：{dry_run}")
 
@@ -109,15 +112,16 @@ async def run_episode(
     _apply_age_group_skills(env, cfg)
     _validate_action_order(env)
 
-    # 取得稅率元件，確認 Saez 模式
+    # 取得稅率元件。內部仍使用 Foundation tax_model='saez'，但此 legacy
+    # baseline 未載入 calibration buffer，因此會停留在 random-tax warm-up。
     tax_component = env.get_component("PeriodicBracketTax")
     assert tax_component.tax_model == "saez", (
         f"Expected tax_model='saez', got '{tax_component.tax_model}'. "
-        f"Please use config_saez.yaml."
+        f"Please use config_random_tax.yaml."
     )
 
-    print(f"\n[Init] 環境初始化完成，tax_model=saez")
-    print(f"[Init] Planner action_spaces={env.world.planner.action_spaces}（Saez 模式下應為空）")
+    print(f"\n[Init] 環境初始化完成，tax_model=saez（legacy random-tax baseline）")
+    print(f"[Init] Planner action_spaces={env.world.planner.action_spaces}（random-tax baseline 僅使用 NOOP）")
 
     # ── 初始化 LLM Agent ──────────────────────────────────
     sim_logger = SimulationLogger(output_dir=output_dir, run_name=run_name)
@@ -191,7 +195,7 @@ async def run_episode(
                 env.world.planner.idx: planner_env_action,
             }
 
-            # 環境推進（Saez 稅率在 component_step 內自動計算）
+            # 環境推進（random-tax rates 在 component_step 內由 cold-start 分支產生）
             obs, rewards, done, info = env.step(actions)
             _apply_labor_modifier(env)
 
@@ -201,16 +205,16 @@ async def run_episode(
                 rewards=rewards,
                 env=env,
                 agent_actions=agent_actions,
-                planner_action=None,  # Saez 模式無 planner action
+                planner_action=None,  # random-tax baseline 無 planner action
             )
 
-            # 記錄 Saez 計算的稅率（每個 tax period 開始時 + 初始）
+            # 記錄 random-tax 稅率（每個 tax period 開始時 + 初始）
             if step % tax_component.period == 0:
-                saez_rates = [
+                random_tax_rates = [
                     round(float(r), 4)
                     for r in tax_component.curr_marginal_rates
                 ]
-                sim_logger.log_tax(step, saez_rates)
+                sim_logger.log_tax(step, random_tax_rates)
 
             # 定期存檔（每 100 步）
             if (step + 1) % 100 == 0:
@@ -247,7 +251,7 @@ async def run_episode(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="AI Economist — Saez Formula Planner Experiment",
+        description="AI Economist — Random-Tax Baseline Experiment",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -268,15 +272,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--config", type=str,
-        default=str(_PROJECT_ROOT / "llm_agent" / "config_saez.yaml"),
-        help="config YAML 路徑（預設 llm_agent/config_saez.yaml）",
+        default=str(_PROJECT_ROOT / "llm_agent" / "config_random_tax.yaml"),
+        help="config YAML 路徑（預設 llm_agent/config_random_tax.yaml）",
     )
     parser.add_argument(
         "--ollama-url", type=str, default="http://localhost:11434",
         help="Ollama API 服務位址",
     )
     parser.add_argument(
-        "--model", type=str, default="llama3.1:8b",
+        "--model", type=str, default="gemma4:e2b",
         help="Ollama 模型名稱（用於 Agent）",
     )
     parser.add_argument(

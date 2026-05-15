@@ -103,6 +103,7 @@ planner:
   name: "Social Planner"
   display_name: "Social Planner"
   role: >
-    Saez formula-based planner. Tax rates are computed automatically
-    by the Foundation framework using the Saez optimal taxation formula.
+    Legacy random-tax baseline. This config intentionally uses the Foundation
+    tax_model="saez" component without a calibration buffer, so the component
+    remains in its cold-start random-tax phase under the current experiment size.
   tax_period: 100

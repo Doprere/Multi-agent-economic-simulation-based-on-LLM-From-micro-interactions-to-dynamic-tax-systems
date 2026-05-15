@@ -6,7 +6,7 @@ Usage:
 
 This batch is configured for the main thesis experiments:
     - 100 runs: gemma4:e2b agents + gpt-4o-mini planner
-    - 100 runs: gemma4:e2b agents + Saez planner
+    - 100 runs: gemma4:e2b agents + random-tax baseline
 
 Runs are launched pair-wise: run i for each experiment starts in parallel,
 then the runner waits for both to finish before launching run i+1.
@@ -35,14 +35,14 @@ EXPERIMENTS: list[dict] = [
         "label": "Main planner: Planner=gpt-4o-mini / Agents=gemma4:e2b",
     },
     {
-        "name": "main_saez",
-        "script": "saez_simulation",
+        "name": "main_random_tax",
+        "script": "random_tax_simulation",
         "agent_backend": "ollama",
         "agent_model": "gemma4:e2b",
-        "planner_model": "saez",
+        "planner_model": "random-tax",
         "steps": 1000,
         "runs": 100,
-        "label": "Main Saez baseline: Planner=Saez / Agents=gemma4:e2b",
+        "label": "Main random-tax baseline: Planner=random-tax / Agents=gemma4:e2b",
     },
 ]
 
@@ -84,10 +84,10 @@ def _build_command(
 ) -> list[str]:
     script = exp.get("script", "run_simulation")
 
-    if script == "saez_simulation":
+    if script == "random_tax_simulation":
         cmd = [
             sys.executable,
-            str(script_dir / "saez_simulation.py"),
+            str(script_dir / "random_tax_simulation.py"),
             "--steps",
             str(steps),
             "--model",

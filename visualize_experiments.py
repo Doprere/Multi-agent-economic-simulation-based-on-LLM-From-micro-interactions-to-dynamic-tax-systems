@@ -7,7 +7,7 @@ visualize_experiments.py — AI Economist 模擬結果視覺化。
   C 組（行為分析）：動作分類比例, Build 事件
   D 組（稅制政策）：稅率結構演化, Gini vs 稅率
 
-  執行方式:python visualize_experiments.py --experiments simulation_results/20260405_015101/expB_qwen2_5_7b_run1 simulation_results/20260405_015101/expC_llama3_1_8b_run1 simulation_results/20260405_015101/expD_qwen2_5_3b_run1 simulation_results/20260406_031441/expC_llama3_1_8b_run1 simulation_results/saez_llama3_1_8b_run1
+  執行方式:python visualize_experiments.py --experiments simulation_results/20260405_015101/expB_qwen2_5_7b_run1 simulation_results/20260405_015101/expC_llama3_1_8b_run1 simulation_results/20260405_015101/expD_qwen2_5_3b_run1 simulation_results/20260406_031441/expC_llama3_1_8b_run1 simulation_results/random_tax_llama3_1_8b_run1
 
 """
 from __future__ import annotations
@@ -52,9 +52,9 @@ AGENT_MARKERS = {0: "o", 1: "s", 2: "^", 3: "D"}
 # 設計：
 #   • 色 = (agent_model, planner_model) 組合；不同組合自動分派不同顏色
 #   • 線型 = run 編號（run1 實線 / run2 虛線 / run3 點線）
-#   • 符號 = planner backend（openai 圓 / ollama 方 / saez 星）
-#   • Saez（rule-based）仍用獨立 marker，但顏色依 combo 分配，
-#     避免不同 Saez baseline 疊成同一種顏色而難以區分
+#   • 符號 = planner backend（openai 圓 / ollama 方 / random-tax 星）
+#   • random-tax（rule-based）仍用獨立 marker，但顏色依 combo 分配，
+#     避免不同 rule-based baseline 疊成同一種顏色而難以區分
 #   • 相同 combo 在多次執行間色彩穩定（靠 preload_combo_colors 預排序分派）
 #
 # 色盲友善高對比調色盤。
@@ -78,7 +78,7 @@ PALETTE: list[str] = [
 PLANNER_MARKERS: dict[str, str] = {
     "openai": "o",
     "ollama": "s",
-    "saez":   "P",
+    "random-tax": "P",
 }
 
 # run 編號 → 線型；未命中回落 "-"
@@ -154,16 +154,21 @@ def load_meta(exp_dir: Path) -> dict[str, str]:
     """從 summary.json 讀取權威 metadata；缺失時 fallback 解析目錄名。
 
     回傳 {agent_model, agent_backend, planner_model, planner_backend}。
-    Planner 共用 agent client 時沿用 agent 欄位；Saez 規則式 planner 以
-    目錄名 "saez" 子字串為 fallback（它不寫 token_usage.planner）。
+    Planner 共用 agent client 時沿用 agent 欄位；random-tax 規則式 baseline 以
+    目錄名 "random_tax" 子字串為 fallback（legacy "saez" 目錄也會相容）。
     """
     summary_path = exp_dir / "summary.json"
-    is_saez_dir = "saez" in exp_dir.name.lower()
+    lower_name = exp_dir.name.lower()
+    is_random_tax_dir = (
+        "random_tax" in lower_name
+        or "random-tax" in lower_name
+        or "main_saez" in lower_name  # legacy output directory name
+    )
     meta = {
         "agent_model": "unknown",
         "agent_backend": "unknown",
-        "planner_model": "saez" if is_saez_dir else "unknown",
-        "planner_backend": "saez" if is_saez_dir else "unknown",
+        "planner_model": "random-tax" if is_random_tax_dir else "unknown",
+        "planner_backend": "random-tax" if is_random_tax_dir else "unknown",
     }
     if summary_path.exists():
         try:
@@ -183,18 +188,18 @@ def load_meta(exp_dir: Path) -> dict[str, str]:
         if planner.get("model"):
             meta["planner_model"] = planner["model"]
             meta["planner_backend"] = planner.get("backend", meta["planner_backend"])
-        elif is_saez_dir:
-            meta["planner_model"] = "saez"
-            meta["planner_backend"] = "saez"
+        elif is_random_tax_dir:
+            meta["planner_model"] = "random-tax"
+            meta["planner_backend"] = "random-tax"
     # Fallback：metadata 缺失時由目錄名推斷（相容舊實驗 summary.json）
     if meta["agent_model"] == "unknown" or meta["planner_model"] == "unknown":
         guess_agent, guess_planner = _guess_models_from_name(exp_dir.name)
         if meta["agent_model"] == "unknown" and guess_agent != "unknown":
             meta["agent_model"] = guess_agent
         if meta["planner_model"] == "unknown":
-            if is_saez_dir:
-                meta["planner_model"] = "saez"
-                meta["planner_backend"] = "saez"
+            if is_random_tax_dir:
+                meta["planner_model"] = "random-tax"
+                meta["planner_backend"] = "random-tax"
             elif guess_planner != "unknown":
                 meta["planner_model"] = guess_planner
     return meta
@@ -228,7 +233,7 @@ def short_label(exp_dir: Path) -> str:
             n = sum(1 for _ in f) - 1
     else:
         n = "?"
-    planner_display = "Saez" if meta["planner_model"] == "saez" else meta["planner_model"]
+    planner_display = "Random-Tax" if meta["planner_model"] == "random-tax" else meta["planner_model"]
     return f"agent={meta['agent_model']} | planner={planner_display} | {run} ({n}步)"
 
 
@@ -249,7 +254,7 @@ def model_marker(exp_dir: Path) -> str:
 def preload_combo_colors(experiments: list[Path]) -> None:
     """預掃實驗，依 (agent_model, planner_model) 排序分派顏色，確保跨執行穩定。
 
-    所有 combo 一律按字典序分派顏色；Saez 是否為 baseline 交給 marker 區分。
+    所有 combo 一律按字典序分派顏色；rule-based baseline 交給 marker 區分。
     同一份實驗集每次跑得到相同顏色。
     """
     combos: set[tuple[str, str]] = set()
@@ -800,7 +805,7 @@ def plot_d1_tax_progression(exp_dir: Path, out_dir: Path) -> None:
     cols = min(n, 5)
     rows = (n + cols - 1) // cols
     fig, axes = plt.subplots(rows, cols, figsize=(3 * cols, 3 * rows), squeeze=False)
-    # 自動偵測稅率範圍（Saez float 0-1 vs LLM int 0-21）
+    # 自動偵測稅率範圍（random-tax float 0-1 vs LLM int 0-21）
     max_tax_val = max(max(td["brackets"]) for td in tax_data)
     is_float_tax = max_tax_val <= 1.0
     for idx, td in enumerate(tax_data):
@@ -904,7 +909,7 @@ def main() -> None:
     preload_combo_colors(experiments)
     print("\nColor assignments:")
     for (agent_m, planner_m), color in _COMBO_COLOR_CACHE.items():
-        planner_disp = "Saez" if planner_m == "saez" else planner_m
+        planner_disp = "Random-Tax" if planner_m == "random-tax" else planner_m
         print(f"  {color}  agent={agent_m} | planner={planner_disp}")
 
     # A 組：跨實驗比較

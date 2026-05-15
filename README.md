@@ -115,7 +115,7 @@ project/
 ├── ollama_simulation.py        # DEPRECATED stub → run_simulation
 ├── run_simulation.py           # Unified entry with asymmetric backend support (recommended)
 ├── run_experiment.py           # Batch runner (multiple runs / models)
-├── saez_simulation.py          # Rule-based Saez planner baseline
+├── random_tax_simulation.py    # Legacy cold-start random-tax baseline
 ├── visualize_experiments.py    # Cross-experiment comparison plots (A/B/C/D groups)
 ├── ai_economist/               # Foundation framework (Zheng et al.)
 └── simulation_results/         # Output directory (git-ignored)
@@ -218,7 +218,7 @@ python visualize_experiments.py \
   --experiments \
     simulation_results/expA_ge4e2b_gpt4omi_1000_run1 \
     simulation_results/expB_ge4e4b_gpt4omi_1000_run1 \
-    simulation_results/saez_llama3_1_8b_run1 \
+    simulation_results/random_tax_llama3_1_8b_run1 \
   --out charts/
 ```
 
@@ -226,9 +226,9 @@ python visualize_experiments.py \
 
 | Dimension | Encodes | Values |
 |-----------|---------|--------|
-| Color | `(agent_model, planner_model)` combo | Okabe-Ito colorblind-friendly palette (Saez fixed to `#444444`) |
+| Color | `(agent_model, planner_model)` combo | Okabe-Ito colorblind-friendly palette |
 | Linestyle | Run number | run1 solid, run2 dashed, run3 dotted |
-| Marker | Planner backend | `o` OpenAI, `s` Ollama, `P` Saez |
+| Marker | Planner backend | `o` OpenAI, `s` Ollama, `P` random-tax |
 
 - Metadata is read from `summary.json`'s `token_usage.agents` / `token_usage.planner` (authoritative).
 - When metadata is missing (legacy runs), falls back to directory-name parsing — supports both underscore (`gemma4_e2b`, `gpt4o_mini`, `llama3_1_8b`) and compressed (`ge4e2b`, `ge4e4b`, `gpt4omi`, `ll318b`, `qw257b`, `qw253b`) naming conventions.

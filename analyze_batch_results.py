@@ -74,7 +74,7 @@ ROBUSTNESS_METRICS = [
     "order_action_share",
     "move_action_share",
 ]
-COMPARISON_GROUPS = ("gpt4omini", "saez")
+COMPARISON_GROUPS = ("gpt4omini", "random_tax")
 BOOTSTRAP_ITERATIONS = 10_000
 BOOTSTRAP_SEED = 20260512
 METRIC_DISPLAY_LABELS = {
@@ -113,8 +113,8 @@ def parse_args() -> argparse.Namespace:
 def infer_group(run_name: str) -> str:
     if "main_gpt4omini" in run_name:
         return "gpt4omini"
-    if "main_saez" in run_name:
-        return "saez"
+    if "main_random_tax" in run_name or "main_saez" in run_name:
+        return "random_tax"
     return "unknown"
 
 
@@ -298,13 +298,13 @@ def metadata_from_name(run_name: str) -> dict[str, Any]:
             "planner_model": "gpt-4o-mini",
             "planner_is_rule_based": False,
         }
-    if group == "saez":
+    if group == "random_tax":
         return {
-            "condition": "gemma4:e2b_agents__saez_planner",
+            "condition": "gemma4:e2b_agents__random-tax_baseline",
             "agent_backend": "ollama",
             "agent_model": "gemma4:e2b",
-            "planner_backend": "saez",
-            "planner_model": "saez",
+            "planner_backend": "random-tax",
+            "planner_model": "random-tax",
             "planner_is_rule_based": True,
         }
     return {
@@ -612,7 +612,7 @@ Generated: {datetime.now(timezone.utc).isoformat()}
 - `estimated_planner_cost_usd` is computed only when planner token usage is available.
 - GPT-4o-mini pricing used: input USD 0.15 / 1M tokens, output USD 0.60 / 1M tokens.
 - Cached input is not estimated because cached-token counts are not logged.
-- Saez runs have no OpenAI planner cost.
+- Random-tax baseline runs have no OpenAI planner cost.
 
 ## Tax Policy Variables
 
@@ -871,7 +871,7 @@ Generated: {datetime.now(timezone.utc).isoformat()}
 - Stage 2 includes rows where `analysis_ready == True`.
 - `statistical_tests.csv` records full group n, analysis-ready n, and valid numeric n for each metric.
 - No outlier or fallback-based exclusion is applied.
-- Comparison groups are `gpt4omini` and `saez`.
+- Comparison groups are `gpt4omini` and `random_tax`.
 
 ## Descriptive Statistics
 
@@ -880,12 +880,12 @@ Generated: {datetime.now(timezone.utc).isoformat()}
 
 ## Statistical Tests
 
-- `statistical_tests.csv` reports GPT-4o-mini minus Saez mean differences.
+- `statistical_tests.csv` reports GPT-4o-mini minus random-tax mean differences.
 - Welch t-statistics are used for mean differences. P-values use a normal approximation and should be treated as approximate screening results, not final inferential proof.
 - Mann-Whitney U test is used as a non-parametric distributional comparison. P-values use a normal approximation with tie correction.
 - Cohen's d reports standardized mean difference.
 - Cliff's delta reports ordinal effect size.
-- Bootstrap difference CIs report the 95% CI of GPT-4o-mini mean minus Saez mean.
+- Bootstrap difference CIs report the 95% CI of GPT-4o-mini mean minus random-tax mean.
 - No multiple-comparison correction is applied in this exploratory Stage 2 table. Interpret significance across many correlated metrics cautiously.
 
 ## Interpretation Rule
@@ -920,8 +920,8 @@ def create_stage2_figures(run_df: pd.DataFrame, out_dir: Path) -> None:
         ("mean_tax_action_value", "Mean Tax Action Value"),
         ("tax_action_volatility", "Tax Action Volatility"),
     ]
-    colors = {"gpt4omini": "#0072B2", "saez": "#D55E00"}
-    labels = {"gpt4omini": "GPT-4o-mini Planner", "saez": "Saez Baseline"}
+    colors = {"gpt4omini": "#0072B2", "random_tax": "#D55E00"}
+    labels = {"gpt4omini": "GPT-4o-mini Planner", "random_tax": "Random-Tax Baseline"}
 
     for metric, title in plot_metrics:
         if metric not in run_df.columns:
@@ -992,14 +992,14 @@ def create_mean_difference_figure(out_dir: Path, figure_dir: Path) -> None:
         tests,
         figure_dir / "mean_difference_forest_raw_all",
         "Raw Mean Differences with Bootstrap 95% CI",
-        "Mean difference: GPT-4o-mini planner minus Saez baseline",
+        "Mean difference: GPT-4o-mini planner minus random-tax baseline",
     )
     # Backward-compatible filename for existing references.
     _plot_mean_difference(
         tests,
         figure_dir / "mean_difference_forest",
         "Raw Mean Differences with Bootstrap 95% CI",
-        "Mean difference: GPT-4o-mini planner minus Saez baseline",
+        "Mean difference: GPT-4o-mini planner minus random-tax baseline",
     )
     create_standardized_effect_figure(tests, figure_dir)
     create_mean_difference_family_figures(tests, figure_dir)
@@ -1058,7 +1058,7 @@ def create_standardized_effect_figure(tests: pd.DataFrame, figure_dir: Path) -> 
     ax.set_yticks(y)
     ax.set_yticklabels([metric_display_label(str(m)) for m in tests["metric"]])
     ax.invert_yaxis()
-    ax.set_xlabel("Cohen's d: GPT-4o-mini planner minus Saez baseline")
+    ax.set_xlabel("Cohen's d: GPT-4o-mini planner minus random-tax baseline")
     ax.set_title("Standardized Effect Sizes Across Metrics")
     ax.grid(axis="x", alpha=0.25)
     fig.tight_layout()
@@ -1102,7 +1102,7 @@ def create_mean_difference_family_figures(tests: pd.DataFrame, figure_dir: Path)
             family,
             figure_dir / f"mean_difference_forest_{family_name}",
             f"{family_name.replace('_', ' ').title()} Mean Differences",
-            "Mean difference: GPT-4o-mini planner minus Saez baseline",
+            "Mean difference: GPT-4o-mini planner minus random-tax baseline",
         )
 
 
@@ -1327,8 +1327,8 @@ def create_time_series_figures(
 ) -> None:
     figure_dir = out_dir / "figures" / "time_series"
     figure_dir.mkdir(parents=True, exist_ok=True)
-    colors = {"gpt4omini": "#0072B2", "saez": "#D55E00"}
-    labels = {"gpt4omini": "GPT-4o-mini Planner", "saez": "Saez Baseline"}
+    colors = {"gpt4omini": "#0072B2", "random_tax": "#D55E00"}
+    labels = {"gpt4omini": "GPT-4o-mini Planner", "random_tax": "Random-Tax Baseline"}
 
     metric_families = {
         "time_series_inequality": [
@@ -1485,10 +1485,10 @@ def summarize_robust_metric(
         "metric_label": metric_display_label(metric),
         "estimator": estimator,
         "n_gpt4omini": int(a.count()),
-        "n_saez": int(b.count()),
+        "n_random_tax": int(b.count()),
         "estimate_gpt4omini": estimate_a,
-        "estimate_saez": estimate_b,
-        "diff_gpt4omini_minus_saez": diff,
+        "estimate_random_tax": estimate_b,
+        "diff_gpt4omini_minus_random_tax": diff,
         "bootstrap_diff_ci_low": ci_lo,
         "bootstrap_diff_ci_high": ci_hi,
         "ci_excludes_zero": bool(ci_lo is not None and ci_hi is not None and (ci_lo > 0 or ci_hi < 0)),
@@ -1557,15 +1557,15 @@ def create_robustness_outputs(
     if not robustness.empty:
         baseline = robustness[
             robustness["scenario"] == "main_analysis_all_runs"
-        ][["metric", "diff_gpt4omini_minus_saez"]].rename(
-            columns={"diff_gpt4omini_minus_saez": "baseline_diff"}
+        ][["metric", "diff_gpt4omini_minus_random_tax"]].rename(
+            columns={"diff_gpt4omini_minus_random_tax": "baseline_diff"}
         )
         robustness = robustness.merge(baseline, on="metric", how="left")
         robustness["same_direction_as_baseline"] = np.sign(
-            robustness["diff_gpt4omini_minus_saez"]
+            robustness["diff_gpt4omini_minus_random_tax"]
         ) == np.sign(robustness["baseline_diff"])
         robustness["absolute_change_from_baseline"] = (
-            robustness["diff_gpt4omini_minus_saez"] - robustness["baseline_diff"]
+            robustness["diff_gpt4omini_minus_random_tax"] - robustness["baseline_diff"]
         ).abs()
     robustness.to_csv(
         out_dir / "robustness_checks.csv", index=False, encoding="utf-8-sig"
@@ -1582,7 +1582,7 @@ Generated: {datetime.now(timezone.utc).isoformat()}
 
 ## Purpose
 
-Robustness checks test whether the main GPT-4o-mini planner versus Saez baseline differences are driven by a small number of problematic or extreme runs. They are sensitivity checks, not replacements for the main analysis.
+Robustness checks test whether the main GPT-4o-mini planner versus random-tax baseline differences are driven by a small number of problematic or extreme runs. They are sensitivity checks, not replacements for the main analysis.
 
 ## Included Runs
 
@@ -1601,7 +1601,7 @@ Robustness checks test whether the main GPT-4o-mini planner versus Saez baseline
 
 ## Reported Statistics
 
-- `diff_gpt4omini_minus_saez` is GPT-4o-mini planner minus Saez baseline.
+- `diff_gpt4omini_minus_random_tax` is GPT-4o-mini planner minus random-tax baseline.
 - Bootstrap 95% CIs use {bootstrap_iterations} resamples with replacement and fixed random seed `{BOOTSTRAP_SEED}`.
 - `same_direction_as_baseline` checks whether each robustness scenario has the same sign as the main analysis estimate.
 - These checks assess stability of observed differences. They do not establish causal mechanisms by themselves.
@@ -1657,14 +1657,14 @@ def create_robustness_figures(
         metric_df = plot_df[plot_df["metric"] == metric]
         y = np.arange(len(metric_df))
         ax.errorbar(
-            metric_df["diff_gpt4omini_minus_saez"],
+            metric_df["diff_gpt4omini_minus_random_tax"],
             y,
             xerr=np.vstack(
                 [
-                    metric_df["diff_gpt4omini_minus_saez"]
+                    metric_df["diff_gpt4omini_minus_random_tax"]
                     - metric_df["bootstrap_diff_ci_low"],
                     metric_df["bootstrap_diff_ci_high"]
-                    - metric_df["diff_gpt4omini_minus_saez"],
+                    - metric_df["diff_gpt4omini_minus_random_tax"],
                 ]
             ),
             fmt="o",
@@ -1706,8 +1706,8 @@ def create_robustness_figures(
     fig.savefig(figure_dir / "robustness_direction_heatmap.svg")
     plt.close(fig)
 
-    colors = {"gpt4omini": "#0072B2", "saez": "#D55E00"}
-    labels = {"gpt4omini": "GPT-4o-mini Planner", "saez": "Saez Baseline"}
+    colors = {"gpt4omini": "#0072B2", "random_tax": "#D55E00"}
+    labels = {"gpt4omini": "GPT-4o-mini Planner", "random_tax": "Random-Tax Baseline"}
     scatter_metrics = [
         ("mean_swf_absolute", "Mean Social Welfare"),
         ("mean_gini", "Mean Gini"),
