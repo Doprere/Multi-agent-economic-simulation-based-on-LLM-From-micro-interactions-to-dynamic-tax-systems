@@ -1,9 +1,11 @@
-"""Calibration-based Saez tax schedule utilities.
+"""Calibration-based Saez utilities.
 
-This module implements the offline schedule calculation for the new `saez`
-baseline. It intentionally does not use the AI Economist online Saez warm-up
-buffer. Instead, it takes a fixed calibration CSV and produces a deterministic
-7-bracket schedule from step 0.
+The formal `saez` baseline is calibration-seeded and dynamic: calibration rows
+are loaded as Foundation's initial Saez buffer, then the Foundation component
+updates the schedule every tax period during the formal run.
+
+This module also provides an offline schedule preview so the initial schedule
+implied by a calibration CSV can be audited before running simulations.
 """
 from __future__ import annotations
 
@@ -54,7 +56,7 @@ def build_saez_schedule_from_calibration(
     bracket_cutoffs: list[float] | None = None,
     n_estimation_bins: int = DEFAULT_N_ESTIMATION_BINS,
 ) -> SaezSchedulePreview:
-    """Build a deterministic Saez marginal tax schedule from calibration rows."""
+    """Preview the initial Saez marginal tax schedule from calibration rows."""
     calibration_csv = Path(calibration_csv)
     rows, csv_cutoffs, random_schedules = _load_calibration_rows(calibration_csv)
     if bracket_cutoffs is None:
@@ -115,6 +117,44 @@ def build_saez_schedule_from_calibration(
         binned_marginal_rates=_finite_or_none_list(binned_marginal_rates),
         calibration_random_schedule_count=len(random_schedules),
     )
+
+
+def load_saez_buffer_from_calibration(
+    calibration_csv: str | Path,
+    income_filter: str = "full",
+) -> list[list[float]]:
+    """Load calibration samples as Foundation-compatible Saez buffer rows.
+
+    Foundation expects rows shaped as [income, marginal_rate]. The income filter
+    is applied consistently with schedule preview sensitivity checks.
+    """
+    calibration_csv = Path(calibration_csv)
+    rows, _csv_cutoffs, _random_schedules = _load_calibration_rows(calibration_csv)
+    incomes = np.array([row["income"] for row in rows], dtype=float)
+    marginal_rates = np.array([row["marginal_rate"] for row in rows], dtype=float)
+    finite_mask = np.isfinite(incomes) & np.isfinite(marginal_rates)
+    incomes = incomes[finite_mask]
+    marginal_rates = marginal_rates[finite_mask]
+
+    if income_filter == "full":
+        filtered_incomes = incomes
+        filtered_rates = marginal_rates
+    elif income_filter == "nonnegative":
+        filtered_incomes = np.maximum(incomes, 0.0)
+        filtered_rates = marginal_rates
+    elif income_filter == "positive":
+        positive_mask = incomes > 0
+        filtered_incomes = incomes[positive_mask]
+        filtered_rates = marginal_rates[positive_mask]
+    else:
+        raise ValueError(
+            "income_filter must be one of: full, nonnegative, positive"
+        )
+
+    return [
+        [float(income), float(rate)]
+        for income, rate in zip(filtered_incomes, filtered_rates)
+    ]
 
 
 def _filter_incomes(incomes: np.ndarray, income_filter: str) -> np.ndarray:
