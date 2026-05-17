@@ -14,9 +14,12 @@ credentials.json
 
 # ── Simulation outputs (large, per-run) ──
 simulation_results/
+archives/
 results_*.tar.gz
 results_*.tar.gz.part_*
 results_*.tar.gz.sha256
+random_calibration_*.tar.gz
+*.truncated.tar.gz
 
 # Temporary diagnostics / extracted research text
 validate_regressive_tax_pipeline.py
