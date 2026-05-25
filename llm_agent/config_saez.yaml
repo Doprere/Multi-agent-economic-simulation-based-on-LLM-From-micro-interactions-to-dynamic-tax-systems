@@ -15,6 +15,7 @@ environment:
         payment_max_skill_multiplier: 3
     - ContinuousDoubleAuction:
         max_num_orders: 5
+        order_duration: 20
         max_bid_ask: 10
         order_labor: 0.25
     - Gather:
