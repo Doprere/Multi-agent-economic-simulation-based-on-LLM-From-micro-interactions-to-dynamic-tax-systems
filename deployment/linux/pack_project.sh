@@ -26,7 +26,12 @@ tar \
   -czf "$OUT" \
   "$PROJECT_DIR/run_simulation.py" \
   "$PROJECT_DIR/run_experiment.py" \
-  "$PROJECT_DIR/visualize_experiments.py" \
+  "$PROJECT_DIR/random_tax_simulation.py" \
+  "$PROJECT_DIR/run_random_calibration.py" \
+  "$PROJECT_DIR/run_saez_experiment.py" \
+  "$PROJECT_DIR/saez_simulation.py" \
+  "$PROJECT_DIR/preview_saez_schedule.py" \
+  "$PROJECT_DIR/validate_calibration_csv.py" \
   "$PROJECT_DIR/requirements.txt" \
   "$PROJECT_DIR/README.md" \
   "$PROJECT_DIR/AGENTS.md" \

@@ -53,6 +53,9 @@ Thumbs.db
 
 # Local analysis / thesis-only utilities
 analyze_*.py
+visualize_experiments.py
+diagnose_obs.py
+PROMPTS_INVENTORY.md
 select_representative_runs.py
 thought_lookup.py
 create_annotated_dynamics_gifs.py

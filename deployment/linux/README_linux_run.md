@@ -158,7 +158,12 @@ powershell -ExecutionPolicy Bypass -File deployment\linux\pack_project.ps1 -Outp
 
 - `run_simulation.py`
 - `run_experiment.py`
-- `visualize_experiments.py`
+- `random_tax_simulation.py`
+- `run_random_calibration.py`
+- `run_saez_experiment.py`
+- `saez_simulation.py`
+- `preview_saez_schedule.py`
+- `validate_calibration_csv.py`
 - `requirements.txt`
 - `README.md`
 - `AGENTS.md`
@@ -567,18 +572,13 @@ pkill -f run_simulation.py
 Linux 的輸出欄位與 Windows 相容，所以你仍然可以用原本的：
 
 ```bash
-python visualize_experiments.py \
-  --base /data/user/linux_simulation_results \
-  --all
+echo "Analysis and visualization scripts are local thesis utilities and are not included in this Linux experiment package."
 ```
 
 或只分析完成清單中的實驗：
 
 ```bash
-python visualize_experiments.py \
-  --experiments \
-  /data/user/linux_simulation_results/episode_0001_agent_gemma4_e2b_planner_gpt_5_4_mini \
-  /data/user/linux_simulation_results/episode_0002_agent_gemma4_e2b_planner_gpt_5_4_mini
+echo "Analysis and visualization scripts are local thesis utilities and are not included in this Linux experiment package."
 ```
 
 建議正式分析時，以 `completed_experiments.txt` 中列出的路徑為主，避免誤讀中斷資料或 archive 資料夾。

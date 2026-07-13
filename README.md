@@ -116,7 +116,11 @@ project/
 ├── run_simulation.py           # Unified entry with asymmetric backend support (recommended)
 ├── run_experiment.py           # Batch runner (multiple runs / models)
 ├── random_tax_simulation.py    # Legacy cold-start random-tax baseline
-├── visualize_experiments.py    # Cross-experiment comparison plots (A/B/C/D groups)
+├── run_random_calibration.py   # Random-tax calibration sample batch runner
+├── run_saez_experiment.py      # Calibration-seeded dynamic Saez batch runner
+├── saez_simulation.py          # Single-run Saez baseline experiment entry
+├── preview_saez_schedule.py    # Preview Saez schedule from calibration samples
+├── validate_calibration_csv.py # Validate calibration CSV before Saez runs
 ├── ai_economist/               # Foundation framework (Zheng et al.)
 └── simulation_results/         # Output directory (git-ignored)
 ```
@@ -202,37 +206,19 @@ Each run generates a timestamped directory under `simulation_results/`:
 
 The `token_usage` block records `{model, backend, api_calls, tokens_in, tokens_out}` for **Agents** and **Planner** separately. When Planner shares the Agents' client, the `planner` entry is `{"shared_with_agents": true}`.
 
-## Experiment Comparison Visualization
+## Experiment Validation Utilities
 
-`visualize_experiments.py` produces four plot groups for cross-run analysis:
-
-| Group | Plots |
-|-------|-------|
-| A — Cross-experiment | SWF, Gini, total Coin, Planner reward |
-| B — Per-agent | Coin trajectory, cumulative labor, resource inventory |
-| C — Behavioral | Action category share (NOOP / Build / Trade / Move), Build events |
-| D — Tax policy | Tax-bracket evolution, Gini vs tax schedule |
+These utilities are kept in the repository because they support experiment execution or pre-run validation:
 
 ```bash
-python visualize_experiments.py \
-  --experiments \
-    simulation_results/expA_ge4e2b_gpt4omi_1000_run1 \
-    simulation_results/expB_ge4e4b_gpt4omi_1000_run1 \
-    simulation_results/random_tax_llama3_1_8b_run1 \
-  --out charts/
+# Validate random-tax calibration samples before running the calibrated Saez baseline
+python validate_calibration_csv.py simulation_results/random_calibration_YYYYMMDD_HHMMSS/calibration_samples.csv --min-samples 2000
+
+# Preview the initial Saez marginal tax schedule generated from a calibration CSV
+python preview_saez_schedule.py simulation_results/random_calibration_YYYYMMDD_HHMMSS/calibration_samples.csv
 ```
 
-**Visual encoding (three independent dimensions):**
-
-| Dimension | Encodes | Values |
-|-----------|---------|--------|
-| Color | `(agent_model, planner_model)` combo | Okabe-Ito colorblind-friendly palette |
-| Linestyle | Run number | run1 solid, run2 dashed, run3 dotted |
-| Marker | Planner backend | `o` OpenAI, `s` Ollama, `P` random-tax |
-
-- Metadata is read from `summary.json`'s `token_usage.agents` / `token_usage.planner` (authoritative).
-- When metadata is missing (legacy runs), falls back to directory-name parsing — supports both underscore (`gemma4_e2b`, `gpt4o_mini`, `llama3_1_8b`) and compressed (`ge4e2b`, `ge4e4b`, `gpt4omi`, `ll318b`, `qw257b`, `qw253b`) naming conventions.
-- Colors are assigned deterministically via `preload_combo_colors()` — the same experiment set produces the same colors across invocations.
+Local diagnostics, prompt-audit scratch files, thesis-only analysis scripts, plots, and result archives are intentionally git-ignored. They are useful during thesis analysis but are not required to reproduce or run the experiments.
 
 ## Key Design Decisions
 
@@ -269,12 +255,6 @@ python visualize_experiments.py \
 - `agent.py` / `planner.py` / `memory.py` / `translator.py` / `llm_client.py` / `ollama_client.py` unchanged (already duck-typed)
 - `summary.json` → `token_usage` is now nested: `{"agents": {...}, "planner": {...}}` (with `{"shared_with_agents": true}` when one client is shared)
 - Known risk: Planner-on-Ollama has no `tax_brackets` fallback — prefer OpenAI for Planner
-
-**Completed (Visualization sync for Phase 3)**
-- `visualize_experiments.py` reads the nested `token_usage` to label each run with both `agent_model` and `planner_model`
-- Three-dimensional visual encoding: color = model combo, linestyle = run number, marker = planner backend
-- Deterministic, colorblind-friendly (Okabe-Ito) palette with stable assignment across invocations
-- Directory-name fallback supports legacy (`gemma4_e2b`, `llama3_1_8b`) and new compressed (`ge4e2b`, `ge4e4b`, `gpt4omi`) naming
 
 **Next (Phase 4 — controlled experiments)**
 - Smoke (100 steps) → full (1000 steps) per model combo; see `.claude/plans/witty-hugging-pearl.md`

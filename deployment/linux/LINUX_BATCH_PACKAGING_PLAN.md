@@ -42,7 +42,12 @@ deployment/linux/
 
 - `run_simulation.py`
 - `run_experiment.py`
-- `visualize_experiments.py`
+- `random_tax_simulation.py`
+- `run_random_calibration.py`
+- `run_saez_experiment.py`
+- `saez_simulation.py`
+- `preview_saez_schedule.py`
+- `validate_calibration_csv.py`
 - `requirements.txt`
 - `README.md`
 - `AGENTS.md`
@@ -450,9 +455,7 @@ pkill -f run_simulation.py
 Linux 輸出與 Windows 相容，可直接用：
 
 ```bash
-python visualize_experiments.py \
-  --base /data/user/linux_simulation_results \
-  --all
+echo "Analysis and visualization scripts are local thesis utilities and are not included in this Linux experiment package."
 ```
 
 建議正式分析時以 `completed_experiments.txt` 列出的 episode 為主。
