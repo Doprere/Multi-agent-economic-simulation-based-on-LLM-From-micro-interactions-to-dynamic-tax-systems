@@ -50,3 +50,11 @@ venv/
 # ── OS ──
 Thumbs.db
 .DS_Store
+
+# Local analysis / thesis-only utilities
+analyze_*.py
+select_representative_runs.py
+thought_lookup.py
+create_annotated_dynamics_gifs.py
+_tmp_*/
+taiwan_age_population_*.xls
